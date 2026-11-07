@@ -149,6 +149,23 @@ async fn list(state: State<'_, AppState>, folder: Option<Uuid>) -> CmdResult<Lis
     Ok(Listing { folder, path, children })
 }
 
+/// A new folder on the server.
+#[tauri::command]
+async fn create_folder(state: State<'_, AppState>, parent: Uuid, name: String) -> CmdResult<Node> {
+    let client = current(&state).await?;
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
+        return Err(CmdError::new("Недопустимое имя папки"));
+    }
+    Ok(client.create_folder(parent, name).await?)
+}
+
+/// What is at a local path: for the form that makes a synced pair.
+#[tauri::command]
+fn local_folder(path: PathBuf) -> sync::LocalFolder {
+    sync::local_folder(&path)
+}
+
 /// The synced folders of the logged-in server, with their status.
 #[tauri::command]
 async fn sync_pairs(state: State<'_, AppState>) -> CmdResult<Vec<sync::PairView>> {
@@ -203,6 +220,8 @@ pub fn run() {
             login,
             logout,
             list,
+            create_folder,
+            local_folder,
             sync_pairs,
             add_sync_pair,
             remove_sync_pair,

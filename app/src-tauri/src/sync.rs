@@ -62,6 +62,8 @@ pub struct Pairs {
     configs: Mutex<Vec<PairConfig>>,
     running: Arc<Mutex<HashMap<Uuid, Running>>>,
     hints: Mutex<Option<JoinHandle<()>>>,
+    /// Pairs that are not run, and why.
+    stopped: Mutex<HashMap<Uuid, PairStatus>>,
 }
 
 impl Pairs {
@@ -71,7 +73,13 @@ impl Pairs {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        Self { dir, configs: Mutex::new(configs), running: Arc::default(), hints: Mutex::new(None) }
+        Self {
+            dir,
+            configs: Mutex::new(configs),
+            running: Arc::default(),
+            hints: Mutex::new(None),
+            stopped: Mutex::default(),
+        }
     }
 
     fn save(&self, configs: &[PairConfig]) -> std::io::Result<()> {
@@ -87,7 +95,9 @@ impl Pairs {
         let configs: Vec<PairConfig> =
             self.configs.lock().unwrap().iter().filter(|c| c.server == server).cloned().collect();
         for config in configs {
-            if !self.running.lock().unwrap().contains_key(&config.id) {
+            if !self.running.lock().unwrap().contains_key(&config.id)
+                && !self.stopped.lock().unwrap().contains_key(&config.id)
+            {
                 self.start_one(app, client, &config);
             }
         }
@@ -102,6 +112,18 @@ impl Pairs {
 
     fn start_one(&self, app: &AppHandle, client: &Client, config: &PairConfig) {
         let id = config.id;
+        if config.remote_path == "/" {
+            // Made by 0.2.0, which let the whole cloud be synced: not run any more.
+            let status = PairStatus {
+                state: "error",
+                error: Some(
+                    "Синхронизация всего облака больше не поддерживается — уберите эту пару и добавьте папку".into(),
+                ),
+                ..Default::default()
+            };
+            self.stopped.lock().unwrap().insert(id, status);
+            return;
+        }
         let status = Arc::new(Mutex::new(PairStatus { state: "idle", ..Default::default() }));
         let state_file = self.dir.join(format!("{id}.sqlite"));
         let engine = match std::fs::create_dir_all(&self.dir)
@@ -132,6 +154,7 @@ impl Pairs {
     /// Stops everything (at logout).
     pub fn stop(&self) {
         self.running.lock().unwrap().clear();
+        self.stopped.lock().unwrap().clear();
         if let Some(hints) = self.hints.lock().unwrap().take() {
             hints.abort();
         }
@@ -139,6 +162,7 @@ impl Pairs {
 
     pub fn list(&self, server: &str) -> Vec<PairView> {
         let running = self.running.lock().unwrap();
+        let stopped = self.stopped.lock().unwrap();
         self.configs
             .lock()
             .unwrap()
@@ -146,7 +170,11 @@ impl Pairs {
             .filter(|c| c.server == server)
             .map(|c| PairView {
                 config: c.clone(),
-                status: running.get(&c.id).map(|r| r.status.lock().unwrap().clone()).unwrap_or_default(),
+                status: running
+                    .get(&c.id)
+                    .map(|r| r.status.lock().unwrap().clone())
+                    .or_else(|| stopped.get(&c.id).cloned())
+                    .unwrap_or_default(),
             })
             .collect()
     }
@@ -158,6 +186,13 @@ impl Pairs {
         local: PathBuf,
         remote: Uuid,
     ) -> Result<PairView, String> {
+        if !local.is_absolute() {
+            return Err("Укажите полный путь к локальной папке".into());
+        }
+        // A new folder is made here; an existing one has to be a folder.
+        if !local.exists() {
+            std::fs::create_dir_all(&local).map_err(|e| format!("Не удалось создать {}: {e}", local.display()))?;
+        }
         let local = std::fs::canonicalize(&local).map_err(|e| format!("Папка {}: {e}", local.display()))?;
         if !local.is_dir() {
             return Err(format!("{} — не папка", local.display()));
@@ -166,25 +201,36 @@ impl Pairs {
         if !details.node.is_dir || details.node.trashed_at.is_some() {
             return Err("На сервере это не папка или она в корзине".into());
         }
+        if details.node.parent_id.is_none() {
+            return Err("Всё облако целиком не синхронизируется — выберите или создайте папку в нём".into());
+        }
         if details.path.iter().chain([&details.node]).any(|n| rc_sync::local::is_hidden_dir(&n.name)) {
             return Err("Скрытые папки (с точкой в начале имени) не синхронизируются".into());
         }
-        let remote_path = {
-            let names: Vec<&str> =
-                details.path.iter().skip(1).chain([&details.node]).map(|n| n.name.as_str()).collect();
-            format!("/{}", names.join("/"))
-        };
+        let remote_path = remote_path(&details);
         let server = client.server().to_string();
-        let config = {
-            let mut configs = self.configs.lock().unwrap();
-            for other in configs.iter().filter(|c| c.server == server) {
-                if local.starts_with(&other.local) || other.local.starts_with(&local) {
-                    return Err(format!("Папка пересекается с уже синхронизируемой {}", other.local.display()));
-                }
-                if other.remote == remote {
-                    return Err(format!("{remote_path} уже синхронизируется с {}", other.local.display()));
+        let others: Vec<PairConfig> =
+            self.configs.lock().unwrap().iter().filter(|c| c.server == server).cloned().collect();
+        for other in &others {
+            if local.starts_with(&other.local) || other.local.starts_with(&local) {
+                return Err(format!("Папка пересекается с уже синхронизируемой {}", other.local.display()));
+            }
+            if other.remote == remote || details.path.iter().any(|a| a.id == other.remote) {
+                return Err(format!("{remote_path} уже синхронизируется (в паре с {})", other.local.display()));
+            }
+            // The other one inside this one.
+            if let Ok(d) = client.details(other.remote).await {
+                if d.path.iter().any(|a| a.id == remote) {
+                    return Err(format!(
+                        "Внутри {remote_path} уже синхронизируется {} (в паре с {})",
+                        other.remote_path,
+                        other.local.display()
+                    ));
                 }
             }
+        }
+        let config = {
+            let mut configs = self.configs.lock().unwrap();
             let config = PairConfig { id: Uuid::new_v4(), server, local, remote, remote_path };
             configs.push(config.clone());
             self.save(&configs).map_err(|e| format!("Не удалось сохранить: {e}"))?;
@@ -198,6 +244,7 @@ impl Pairs {
     /// Stops syncing a pair; the files stay on both sides.
     pub fn remove(&self, id: Uuid) -> Result<(), String> {
         self.running.lock().unwrap().remove(&id);
+        self.stopped.lock().unwrap().remove(&id);
         let mut configs = self.configs.lock().unwrap();
         configs.retain(|c| c.id != id);
         self.save(&configs).map_err(|e| e.to_string())?;
@@ -219,6 +266,32 @@ impl Pairs {
             r.engine.allow_mass_delete_once();
             r.runner.wake();
         }
+    }
+}
+
+/// `/a/b` for a folder on the server (`/` for the root).
+pub fn remote_path(details: &rc_core::types::NodeDetails) -> String {
+    let names: Vec<&str> =
+        details.path.iter().chain([&details.node]).filter(|n| n.parent_id.is_some()).map(|n| n.name.as_str()).collect();
+    format!("/{}", names.join("/"))
+}
+
+/// What is at a local path the user typed or picked.
+#[derive(Debug, Serialize)]
+pub struct LocalFolder {
+    pub exists: bool,
+    pub is_dir: bool,
+    /// Entries directly inside (folders only).
+    pub entries: usize,
+}
+
+pub fn local_folder(path: &Path) -> LocalFolder {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => {
+            LocalFolder { exists: true, is_dir: true, entries: std::fs::read_dir(path).map(|d| d.count()).unwrap_or(0) }
+        }
+        Ok(_) => LocalFolder { exists: true, is_dir: false, entries: 0 },
+        Err(_) => LocalFolder { exists: false, is_dir: false, entries: 0 },
     }
 }
 

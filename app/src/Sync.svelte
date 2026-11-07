@@ -4,11 +4,13 @@
   import { ask } from '@tauri-apps/plugin-dialog';
   import * as api from './api';
   import * as format from './format';
+  import AddPair from './AddPair.svelte';
 
   let { onexpired }: { onexpired: () => void } = $props();
 
   let pairs = $state<api.Pair[]>([]);
   let error = $state('');
+  let adding = $state(false);
   let unlisten: UnlistenFn | null = null;
 
   async function load() {
@@ -59,10 +61,23 @@
   {#if error}
     <p class="error">{error}</p>
   {/if}
-  {#if pairs.length === 0}
-    <p class="muted empty">
-      Синхронизируемых папок нет. Откройте папку во вкладке «Файлы» и нажмите «Синхронизировать с папкой…».
-    </p>
+  {#if adding}
+    <AddPair
+      synced={pairs.map((p) => p.remote)}
+      ondone={async () => ((adding = false), await load())}
+      oncancel={() => (adding = false)}
+      {onexpired}
+    />
+  {:else}
+    <div class="top">
+      <button class="primary" onclick={() => (adding = true)}>Добавить папку…</button>
+    </div>
+    {#if pairs.length === 0}
+      <p class="muted empty">
+        Синхронизируемых папок нет. Добавьте пару: папку на этом компьютере и папку в облаке — они будут
+        одинаковыми. Синхронизируются только выбранные папки, а не всё облако.
+      </p>
+    {/if}
   {/if}
   <ul>
     {#each pairs as pair (pair.id)}
@@ -108,6 +123,10 @@
 <style>
   main {
     padding: 12px 16px 48px;
+  }
+
+  .top {
+    margin-bottom: 12px;
   }
 
   .empty {

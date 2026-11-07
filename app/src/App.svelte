@@ -50,7 +50,7 @@
     </div>
   </div>
   {#if tab === 'files'}
-    <Files onexpired={expired} onsynced={() => (tab = 'sync')} />
+    <Files onexpired={expired} />
   {:else}
     <Sync onexpired={expired} />
   {/if}

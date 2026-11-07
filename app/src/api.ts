@@ -70,3 +70,12 @@ export const addSyncPair = (local: string, remote: string) => invoke<Pair>('add_
 export const removeSyncPair = (id: string) => invoke<void>('remove_sync_pair', { id });
 export const syncNow = (id: string) => invoke<void>('sync_now', { id });
 export const confirmDeletions = (id: string) => invoke<void>('confirm_deletions', { id });
+
+export interface LocalFolder {
+  exists: boolean;
+  is_dir: boolean;
+  entries: number;
+}
+
+export const createFolder = (parent: string, name: string) => invoke<Node>('create_folder', { parent, name });
+export const localFolder = (path: string) => invoke<LocalFolder>('local_folder', { path });

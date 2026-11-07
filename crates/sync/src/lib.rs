@@ -29,6 +29,7 @@ mod error;
 pub mod local;
 pub mod plan;
 pub mod remote;
+pub mod runner;
 pub mod state;
 
 #[cfg(test)]

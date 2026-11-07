@@ -17,7 +17,9 @@ thiserror.workspace = true
 tracing.workspace = true
 # SQLite built in: no system library to find on Windows or Android.
 rusqlite = { version = "0.41", features = ["bundled"] }
+notify = "8.2"
 
 [dev-dependencies]
 tempfile.workspace = true
 reqwest.workspace = true
+rc-core = { workspace = true, features = ["testing"] }

@@ -1,12 +1,9 @@
 <script lang="ts">
+  import { open as pickFolder } from '@tauri-apps/plugin-dialog';
   import * as api from './api';
   import * as format from './format';
 
-  let {
-    account,
-    onlogout,
-    onexpired,
-  }: { account: api.Account; onlogout: () => void; onexpired: () => void } = $props();
+  let { onexpired, onsynced }: { onexpired: () => void; onsynced: () => void } = $props();
 
   let listing = $state<api.Listing | null>(null);
   let error = $state('');
@@ -27,6 +24,20 @@
   $effect(() => {
     open(null);
   });
+
+  /** Sync the folder shown with a local folder the user picks. */
+  async function syncHere() {
+    if (!listing) return;
+    const local = await pickFolder({ directory: true, title: `Локальная папка для «${listing.folder.name || 'Файлы'}»` });
+    if (typeof local !== 'string') return;
+    error = '';
+    try {
+      await api.addSyncPair(local, listing.folder.id);
+      onsynced();
+    } catch (e) {
+      error = api.asError(e).message;
+    }
+  }
 </script>
 
 <header>
@@ -43,10 +54,11 @@
       {/if}
     {/if}
   </nav>
-  <div class="account">
-    <span class="muted" title={account.server}>{account.display_name || account.username}</span>
-    <button onclick={onlogout}>Выйти</button>
-  </div>
+  {#if listing}
+    <button class="sync" onclick={syncHere} title="Держать эту папку одинаковой на сервере и на этом устройстве">
+      Синхронизировать с папкой…
+    </button>
+  {/if}
 </header>
 
 {#if error}
@@ -120,10 +132,7 @@
     text-overflow: ellipsis;
   }
 
-  .account {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .sync {
     flex-shrink: 0;
   }
 

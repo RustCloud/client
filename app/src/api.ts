@@ -40,3 +40,33 @@ export const session = () => invoke<Account | null>('session');
 export const login = (server: string) => invoke<Account>('login', { server });
 export const logout = () => invoke<void>('logout');
 export const list = (folder: string | null) => invoke<Listing>('list', { folder });
+
+// Synced folders (app/src-tauri/src/sync.rs).
+
+export interface PairStatus {
+  state: 'idle' | 'syncing' | 'error';
+  last_sync: string | null;
+  uploaded: number;
+  downloaded: number;
+  deleted: number;
+  conflicts: string[];
+  failed: [string, string][];
+  error: string | null;
+  confirm_deletions: [number, number] | null;
+  needs_login: boolean;
+}
+
+export interface Pair {
+  id: string;
+  server: string;
+  local: string;
+  remote: string;
+  remote_path: string;
+  status: PairStatus;
+}
+
+export const syncPairs = () => invoke<Pair[]>('sync_pairs');
+export const addSyncPair = (local: string, remote: string) => invoke<Pair>('add_sync_pair', { local, remote });
+export const removeSyncPair = (id: string) => invoke<void>('remove_sync_pair', { id });
+export const syncNow = (id: string) => invoke<void>('sync_now', { id });
+export const confirmDeletions = (id: string) => invoke<void>('confirm_deletions', { id });

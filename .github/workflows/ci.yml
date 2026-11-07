@@ -19,7 +19,7 @@ env:
 
 jobs:
   core:
-    name: Core (fmt, clippy, tests against a real server)
+    name: Core and sync (fmt, clippy, tests against a real server)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -p rc-core --all-targets --locked -- -D warnings
+        run: cargo clippy -p rc-core -p rc-sync --all-targets --features rc-core/testing --locked -- -D warnings
 
       - name: Build the server
         working-directory: server
@@ -55,7 +55,7 @@ jobs:
       - name: Test
         run: |
           set +e
-          cargo test -p rc-core --locked 2>&1 | tee test.log
+          cargo test -p rc-core -p rc-sync --features rc-core/testing --locked 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             grep -E -A25 'panicked at|^error' test.log | head -50 | sed 's/^/::error title=Test::/'

@@ -160,10 +160,22 @@ async fn create_folder(state: State<'_, AppState>, parent: Uuid, name: String) -
     Ok(client.create_folder(parent, name).await?)
 }
 
-/// What is at a local path: for the form that makes a synced pair.
+/// Subfolders of a local folder, for the picker.
 #[tauri::command]
-fn local_folder(path: PathBuf) -> sync::LocalFolder {
-    sync::local_folder(&path)
+fn local_dirs(path: PathBuf) -> CmdResult<Vec<sync::LocalDir>> {
+    sync::local_dirs(&path).map_err(|e| CmdError::new(format!("{}: {e}", path.display())))
+}
+
+/// Where the local picker starts.
+#[tauri::command]
+fn local_places() -> Vec<sync::LocalDir> {
+    sync::local_places()
+}
+
+/// A new local folder.
+#[tauri::command]
+fn create_local_dir(parent: PathBuf, name: String) -> CmdResult<sync::LocalDir> {
+    sync::create_local_dir(&parent, &name).map_err(CmdError::new)
 }
 
 /// The synced folders of the logged-in server, with their status.
@@ -221,7 +233,9 @@ pub fn run() {
             logout,
             list,
             create_folder,
-            local_folder,
+            local_dirs,
+            local_places,
+            create_local_dir,
             sync_pairs,
             add_sync_pair,
             remove_sync_pair,

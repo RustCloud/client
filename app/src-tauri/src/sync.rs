@@ -62,8 +62,6 @@ pub struct Pairs {
     configs: Mutex<Vec<PairConfig>>,
     running: Arc<Mutex<HashMap<Uuid, Running>>>,
     hints: Mutex<Option<JoinHandle<()>>>,
-    /// Pairs that are not run, and why.
-    stopped: Mutex<HashMap<Uuid, PairStatus>>,
 }
 
 impl Pairs {
@@ -73,13 +71,7 @@ impl Pairs {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        Self {
-            dir,
-            configs: Mutex::new(configs),
-            running: Arc::default(),
-            hints: Mutex::new(None),
-            stopped: Mutex::default(),
-        }
+        Self { dir, configs: Mutex::new(configs), running: Arc::default(), hints: Mutex::new(None) }
     }
 
     fn save(&self, configs: &[PairConfig]) -> std::io::Result<()> {
@@ -95,9 +87,7 @@ impl Pairs {
         let configs: Vec<PairConfig> =
             self.configs.lock().unwrap().iter().filter(|c| c.server == server).cloned().collect();
         for config in configs {
-            if !self.running.lock().unwrap().contains_key(&config.id)
-                && !self.stopped.lock().unwrap().contains_key(&config.id)
-            {
+            if !self.running.lock().unwrap().contains_key(&config.id) {
                 self.start_one(app, client, &config);
             }
         }
@@ -112,18 +102,6 @@ impl Pairs {
 
     fn start_one(&self, app: &AppHandle, client: &Client, config: &PairConfig) {
         let id = config.id;
-        if config.remote_path == "/" {
-            // Made by 0.2.0, which let the whole cloud be synced: not run any more.
-            let status = PairStatus {
-                state: "error",
-                error: Some(
-                    "Синхронизация всего облака больше не поддерживается — уберите эту пару и добавьте папку".into(),
-                ),
-                ..Default::default()
-            };
-            self.stopped.lock().unwrap().insert(id, status);
-            return;
-        }
         let status = Arc::new(Mutex::new(PairStatus { state: "idle", ..Default::default() }));
         let state_file = self.dir.join(format!("{id}.sqlite"));
         let engine = match std::fs::create_dir_all(&self.dir)
@@ -154,7 +132,6 @@ impl Pairs {
     /// Stops everything (at logout).
     pub fn stop(&self) {
         self.running.lock().unwrap().clear();
-        self.stopped.lock().unwrap().clear();
         if let Some(hints) = self.hints.lock().unwrap().take() {
             hints.abort();
         }
@@ -162,7 +139,6 @@ impl Pairs {
 
     pub fn list(&self, server: &str) -> Vec<PairView> {
         let running = self.running.lock().unwrap();
-        let stopped = self.stopped.lock().unwrap();
         self.configs
             .lock()
             .unwrap()
@@ -170,11 +146,7 @@ impl Pairs {
             .filter(|c| c.server == server)
             .map(|c| PairView {
                 config: c.clone(),
-                status: running
-                    .get(&c.id)
-                    .map(|r| r.status.lock().unwrap().clone())
-                    .or_else(|| stopped.get(&c.id).cloned())
-                    .unwrap_or_default(),
+                status: running.get(&c.id).map(|r| r.status.lock().unwrap().clone()).unwrap_or_default(),
             })
             .collect()
     }
@@ -200,9 +172,6 @@ impl Pairs {
         let details = client.details(remote).await.map_err(|e| e.to_string())?;
         if !details.node.is_dir || details.node.trashed_at.is_some() {
             return Err("На сервере это не папка или она в корзине".into());
-        }
-        if details.node.parent_id.is_none() {
-            return Err("Всё облако целиком не синхронизируется — выберите или создайте папку в нём".into());
         }
         if details.path.iter().chain([&details.node]).any(|n| rc_sync::local::is_hidden_dir(&n.name)) {
             return Err("Скрытые папки (с точкой в начале имени) не синхронизируются".into());
@@ -244,7 +213,6 @@ impl Pairs {
     /// Stops syncing a pair; the files stay on both sides.
     pub fn remove(&self, id: Uuid) -> Result<(), String> {
         self.running.lock().unwrap().remove(&id);
-        self.stopped.lock().unwrap().remove(&id);
         let mut configs = self.configs.lock().unwrap();
         configs.retain(|c| c.id != id);
         self.save(&configs).map_err(|e| e.to_string())?;
@@ -276,23 +244,59 @@ pub fn remote_path(details: &rc_core::types::NodeDetails) -> String {
     format!("/{}", names.join("/"))
 }
 
-/// What is at a local path the user typed or picked.
+/// A local folder in the picker.
 #[derive(Debug, Serialize)]
-pub struct LocalFolder {
-    pub exists: bool,
-    pub is_dir: bool,
-    /// Entries directly inside (folders only).
-    pub entries: usize,
+pub struct LocalDir {
+    pub name: String,
+    pub path: PathBuf,
 }
 
-pub fn local_folder(path: &Path) -> LocalFolder {
-    match std::fs::metadata(path) {
-        Ok(m) if m.is_dir() => {
-            LocalFolder { exists: true, is_dir: true, entries: std::fs::read_dir(path).map(|d| d.count()).unwrap_or(0) }
-        }
-        Ok(_) => LocalFolder { exists: true, is_dir: false, entries: 0 },
-        Err(_) => LocalFolder { exists: false, is_dir: false, entries: 0 },
+/// A local folder's subfolders, hidden ones and links left out, by name.
+pub fn local_dirs(path: &Path) -> std::io::Result<Vec<LocalDir>> {
+    let mut dirs: Vec<LocalDir> = std::fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            (!name.starts_with('.')).then(|| LocalDir { path: e.path(), name })
+        })
+        .collect();
+    dirs.sort_by_key(|d| d.name.to_lowercase());
+    Ok(dirs)
+}
+
+/// Where the local picker starts: the home folder, then the file system roots
+/// (`/`; drives on Windows).
+pub fn local_places() -> Vec<LocalDir> {
+    let mut places = Vec::new();
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        places.push(LocalDir { name: "Домашняя папка".into(), path: PathBuf::from(home) });
     }
+    if cfg!(windows) {
+        for letter in b'A'..=b'Z' {
+            let drive = PathBuf::from(format!("{}:\\", letter as char));
+            if drive.is_dir() {
+                places.push(LocalDir { name: format!("Диск {}:", letter as char), path: drive });
+            }
+        }
+    } else {
+        places.push(LocalDir { name: "/".into(), path: PathBuf::from("/") });
+    }
+    places
+}
+
+/// A new folder in a local folder.
+pub fn create_local_dir(parent: &Path, name: &str) -> Result<LocalDir, String> {
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
+        return Err("Недопустимое имя папки".into());
+    }
+    let path = parent.join(name);
+    std::fs::create_dir(&path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => format!("«{name}» здесь уже есть"),
+        _ => format!("Не удалось создать {}: {e}", path.display()),
+    })?;
+    Ok(LocalDir { name: name.into(), path })
 }
 
 fn apply(s: &mut PairStatus, update: Status) {

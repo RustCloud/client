@@ -1,312 +1,248 @@
 <script lang="ts">
-  import { open as pickFolder } from '@tauri-apps/plugin-dialog';
-  import { homeDir, join } from '@tauri-apps/api/path';
   import * as api from './api';
+  import Pane, { type Crumb, type Item } from './Pane.svelte';
 
   let {
-    synced,
+    pairs,
     ondone,
     oncancel,
     onexpired,
-  }: { synced: string[]; ondone: () => void; oncancel: () => void; onexpired: () => void } = $props();
+  }: { pairs: api.Pair[]; ondone: () => void; oncancel: (() => void) | null; onexpired: () => void } = $props();
 
-  // 1. The folder on this computer.
-  let local = $state('');
-  let localInfo = $state<api.LocalFolder | null>(null);
-
-  // 2. The folder in the cloud.
-  let listing = $state<api.Listing | null>(null);
-  let newName = $state('');
-  let creating = $state(false);
-
-  let error = $state('');
-  let busy = $state(false);
-
-  let folders = $derived(listing ? listing.children.filter((n) => n.is_dir && !n.name.startsWith('.')) : []);
-  let atRoot = $derived(!listing || listing.folder.parent_id === null);
-  let remoteTaken = $derived(
-    !!listing && [listing.folder, ...listing.path].some((n) => synced.includes(n.id)),
-  );
-  let localOk = $derived(!!local.trim() && !!localInfo && (!localInfo.exists || localInfo.is_dir));
-  let ready = $derived(localOk && !atRoot && !remoteTaken && !busy);
-
-  function fail(e: unknown) {
+  function message(e: unknown): string {
     const err = api.asError(e);
     if (err.needs_login) onexpired();
-    else error = err.message;
+    return err.message;
   }
 
+  // ---- This computer: `null` is the list of places (home, drives).
+  let places = $state<api.LocalDir[]>([]);
+  let localAt = $state<string | null>(null);
+  let localDirs = $state<api.LocalDir[]>([]);
+  let local = $state<Item | null>(null);
+  let localError = $state('');
+
+  async function openLocal(path: string | null) {
+    localError = '';
+    try {
+      localDirs = path === null ? places : await api.localDirs(path);
+      localAt = path;
+    } catch (e) {
+      localError = message(e);
+    }
+  }
+
+  const syncedLocal = (path: string) => pairs.some((p) => p.local === path);
+  const localItem = (d: api.LocalDir): Item => ({
+    key: d.path,
+    name: d.name,
+    note: syncedLocal(d.path) ? 'синхронизируется' : undefined,
+  });
+
+  /** `/a/b` → `/`, `/a`, `/a/b`; `C:\a` → `C:\`, `C:\a`. */
+  function localCrumbs(path: string | null): Crumb[] {
+    const crumbs: Crumb[] = [{ label: 'Места', go: () => openLocal(null) }];
+    if (path === null) return crumbs;
+    const windows = /^[A-Za-z]:\\/.test(path);
+    const sep = windows ? '\\' : '/';
+    const parts = path.split(sep).filter(Boolean);
+    let at = windows ? '' : '/';
+    if (!windows) crumbs.push({ label: '/', go: () => openLocal('/') });
+    parts.forEach((part, i) => {
+      at = windows ? (i === 0 ? part + '\\' : at + (at.endsWith('\\') ? '' : '\\') + part) : at + (i ? '/' : '') + part;
+      const target = at;
+      crumbs.push({ label: part, go: () => openLocal(target) });
+    });
+    return crumbs;
+  }
+
+  function localName(path: string): string {
+    return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+  }
+
+  async function createLocal(name: string) {
+    if (localAt === null) return;
+    localError = '';
+    try {
+      const made = await api.createLocalDir(localAt, name);
+      await openLocal(localAt);
+      local = localItem(made);
+    } catch (e) {
+      localError = message(e);
+      throw e;
+    }
+  }
+
+  // ---- The cloud.
+  let listing = $state<api.Listing | null>(null);
+  let remote = $state<Item | null>(null);
+  let remoteError = $state('');
+
   async function openRemote(folder: string | null) {
-    error = '';
+    remoteError = '';
     try {
       listing = await api.list(folder);
     } catch (e) {
-      fail(e);
+      remoteError = message(e);
     }
   }
 
-  $effect(() => {
-    openRemote(null);
+  /** The path of a folder in the cloud, for showing. */
+  function cloudPath(l: api.Listing, node: api.Node): string {
+    const names = [...l.path.slice(1), l.folder].filter((n) => n.parent_id !== null).map((n) => n.name);
+    if (node.id !== l.folder.id) names.push(node.name);
+    return '/' + names.join('/');
+  }
+
+  const syncedRemote = (id: string) => pairs.some((p) => p.remote === id);
+  const remoteItem = (n: api.Node): Item => ({
+    key: n.id,
+    name: n.parent_id === null ? 'Всё облако' : n.name,
+    note: syncedRemote(n.id) ? 'синхронизируется' : undefined,
   });
+  let remotePaths = $state<Record<string, string>>({});
 
-  // What is at the typed path, a moment after typing stops.
-  $effect(() => {
-    const path = local.trim();
-    localInfo = null;
-    if (!path) return;
-    const timer = setTimeout(async () => {
-      try {
-        localInfo = await api.localFolder(path);
-      } catch (e) {
-        fail(e);
-      }
-    }, 250);
-    return () => clearTimeout(timer);
-  });
-
-  function baseName(path: string): string {
-    return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+  function selectRemote(item: Item) {
+    if (!listing) return;
+    const node = item.key === listing.folder.id ? listing.folder : listing.children.find((n) => n.id === item.key);
+    if (node) remotePaths[item.key] = cloudPath(listing, node);
+    remote = item;
   }
 
-  async function chooseLocal() {
-    let defaultPath: string | undefined;
+  async function createRemote(name: string) {
+    if (!listing) return;
+    remoteError = '';
     try {
-      defaultPath = local.trim() || (await homeDir());
-    } catch {
-      /* no home: the dialog picks */
-    }
-    const picked = await pickFolder({ directory: true, title: 'Папка на этом компьютере', defaultPath });
-    if (typeof picked !== 'string') return;
-    local = picked;
-    if (!newName) newName = baseName(picked);
-  }
-
-  async function suggestLocal() {
-    try {
-      local = await join(await homeDir(), 'RustCloud');
+      const made = await api.createFolder(listing.folder.id, name);
+      await openRemote(listing.folder.id);
+      if (listing) selectRemote(remoteItem(made));
     } catch (e) {
-      fail(e);
+      remoteError = api.asError(e).code === 'NAME_TAKEN' ? `«${name}» здесь уже есть` : message(e);
+      throw e;
     }
   }
 
-  async function makeRemote() {
-    if (!listing || !newName.trim()) return;
-    creating = true;
-    error = '';
-    try {
-      const made = await api.createFolder(listing.folder.id, newName.trim());
-      newName = '';
-      await openRemote(made.id);
-    } catch (e) {
-      if (api.asError(e).code === 'NAME_TAKEN') error = `«${newName.trim()}» здесь уже есть — откройте её или выберите другое имя`;
-      else fail(e);
-    } finally {
-      creating = false;
-    }
-  }
+  let remoteCrumbs = $derived<Crumb[]>(
+    listing
+      ? [
+          { label: 'Облако', go: () => openRemote(null) },
+          ...[...listing.path.slice(1), ...(listing.folder.parent_id ? [listing.folder] : [])].map((n) => ({
+            label: n.name,
+            go: () => openRemote(n.id),
+          })),
+        ]
+      : [{ label: 'Облако', go: () => openRemote(null) }],
+  );
+
+  // ---- Both.
+  let busy = $state(false);
+  let error = $state('');
+  let ready = $derived(!!local && !!remote && !busy);
 
   async function start() {
-    if (!listing || !ready) return;
+    if (!local || !remote) return;
     busy = true;
     error = '';
     try {
-      await api.addSyncPair(local.trim(), listing.folder.id);
+      await api.addSyncPair(local.key, remote.key);
+      local = null;
+      remote = null;
       ondone();
     } catch (e) {
-      fail(e);
+      error = message(e);
     } finally {
       busy = false;
     }
   }
 
-  function localHint(info: api.LocalFolder | null): string {
-    if (!local.trim()) return 'Выберите папку или впишите путь к новой — она будет создана.';
-    if (!info) return '';
-    if (!info.exists) return 'Такой папки нет — она будет создана.';
-    if (!info.is_dir) return 'Это файл, а не папка.';
-    if (info.entries === 0) return 'Пустая папка — в неё скачается папка из облака.';
-    return `В папке ${info.entries} элементов — они объединятся с папкой в облаке (одинаковые имена с разным содержимым сохранятся обе версии).`;
-  }
+  $effect(() => {
+    (async () => {
+      try {
+        places = await api.localPlaces();
+      } catch (e) {
+        localError = message(e);
+      }
+      await openLocal(places[0]?.path ?? null);
+    })();
+    openRemote(null);
+  });
 </script>
 
 <section class="add">
-  <h2>Новая синхронизируемая папка</h2>
-
-  <div class="step">
-    <h3>1. Папка на этом компьютере</h3>
-    <div class="line">
-      <input bind:value={local} placeholder="/home/…/RustCloud" spellcheck="false" />
-      <button onclick={chooseLocal}>Выбрать…</button>
-    </div>
-    <p class="hint" class:error={!!localInfo && localInfo.exists && !localInfo.is_dir}>
-      {localHint(localInfo)}
-      {#if !local.trim()}<button class="link" onclick={suggestLocal}>Предложить ~/RustCloud</button>{/if}
-    </p>
+  <div class="panes">
+    <Pane
+      title="На этом компьютере"
+      icon="💻"
+      crumbs={localCrumbs(localAt)}
+      here={localAt === null ? null : localItem({ name: localName(localAt), path: localAt })}
+      items={localDirs.map(localItem)}
+      selected={local?.key ?? null}
+      error={localError}
+      onselect={(item) => (local = item)}
+      onopen={(item) => openLocal(item.key)}
+      oncreate={localAt === null ? null : createLocal}
+    />
+    <div class="arrow" aria-hidden="true">⇄</div>
+    <Pane
+      title="В облаке"
+      icon="☁"
+      crumbs={remoteCrumbs}
+      here={listing ? remoteItem(listing.folder) : null}
+      items={listing ? listing.children.filter((n) => n.is_dir && !n.name.startsWith('.')).map(remoteItem) : []}
+      selected={remote?.key ?? null}
+      error={remoteError}
+      onselect={selectRemote}
+      onopen={(item) => openRemote(item.key)}
+      oncreate={listing ? createRemote : null}
+    />
   </div>
 
-  <div class="step">
-    <h3>2. Папка в облаке</h3>
-    <nav aria-label="Путь в облаке">
-      <button class="crumb" onclick={() => openRemote(null)}>Облако</button>
-      {#if listing}
-        {#each listing.path.slice(1) as dir (dir.id)}
-          <span class="muted">/</span>
-          <button class="crumb" onclick={() => openRemote(dir.id)}>{dir.name}</button>
-        {/each}
-        {#if !atRoot}
-          <span class="muted">/</span>
-          <span class="current">{listing.folder.name}</span>
-        {/if}
-      {/if}
-    </nav>
-    <ul class="folders">
-      {#each folders as dir (dir.id)}
-        <li>
-          <button class="row" onclick={() => openRemote(dir.id)}>
-            <span aria-hidden="true">📁</span>
-            <span class="name">{dir.name}</span>
-            {#if synced.includes(dir.id)}<span class="muted tag">уже синхронизируется</span>{/if}
-          </button>
-        </li>
-      {:else}
-        {#if listing}<li class="muted none">Вложенных папок нет</li>{/if}
-      {/each}
-    </ul>
-    <div class="line">
-      <input
-        bind:value={newName}
-        placeholder="Имя новой папки"
-        onkeydown={(e) => e.key === 'Enter' && makeRemote()}
-      />
-      <button onclick={makeRemote} disabled={!newName.trim() || creating}>Создать здесь</button>
-    </div>
-    <p class="hint" class:error={remoteTaken}>
-      {#if atRoot}
-        Откройте папку или создайте новую — всё облако целиком не синхронизируется.
-      {:else if remoteTaken}
-        Эта папка (или папка выше) уже синхронизируется.
-      {:else if listing}
-        Синхронизироваться будет <b>/{[...listing.path.slice(1), listing.folder].map((n) => n.name).join('/')}</b> со
-        всем содержимым.
-      {/if}
-    </p>
+  <div class="choice">
+    <span class:muted={!local}>{local ? local.key : 'Выберите папку на компьютере'}</span>
+    <span aria-hidden="true">⇄</span>
+    <span class:muted={!remote}>{remote ? (remotePaths[remote.key] ?? remote.name) : 'Выберите папку в облаке'}</span>
   </div>
-
   {#if error}<p class="error">{error}</p>{/if}
-
   <div class="actions">
     <button class="primary" onclick={start} disabled={!ready}>{busy ? 'Добавление…' : 'Синхронизировать'}</button>
-    <button onclick={oncancel}>Отмена</button>
+    {#if oncancel}<button onclick={oncancel}>Отмена</button>{/if}
   </div>
 </section>
 
 <style>
   .add {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    padding: 12px 14px;
-    margin-bottom: 14px;
     display: grid;
-    gap: 12px;
+    gap: 10px;
+    margin-bottom: 18px;
   }
 
-  h2 {
-    font-size: 16px;
-    margin: 0;
-  }
-
-  h3 {
-    font-size: 14px;
-    margin: 0 0 6px;
-  }
-
-  .line {
-    display: flex;
+  .panes {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     gap: 8px;
+    align-items: center;
   }
 
-  .line input {
-    flex: 1;
-    min-width: 0;
-    padding: 6px 8px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-  }
-
-  .hint {
-    margin: 6px 0 0;
-    font-size: 13px;
+  .arrow {
+    font-size: 20px;
     color: var(--muted);
   }
 
-  .hint.error {
-    color: var(--danger);
+  @media (max-width: 640px) {
+    .panes {
+      grid-template-columns: 1fr;
+    }
+    .arrow {
+      text-align: center;
+    }
   }
 
-  button.link {
-    border: none;
-    background: none;
-    padding: 0 4px;
-    color: var(--accent);
-    text-decoration: underline;
-  }
-
-  nav {
+  .choice {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 2px;
-    margin-bottom: 4px;
-  }
-
-  .crumb {
-    border: none;
-    background: none;
-    padding: 2px 6px;
-  }
-
-  .current {
-    padding: 2px 6px;
-    font-weight: 600;
-  }
-
-  .folders {
-    list-style: none;
-    margin: 0 0 8px;
-    padding: 0;
-    max-height: 220px;
-    overflow-y: auto;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-  }
-
-  .row {
-    display: flex;
-    align-items: center;
     gap: 8px;
-    width: 100%;
-    border: none;
-    border-radius: 0;
-    background: none;
-    text-align: left;
-    padding: 6px 8px;
-  }
-
-  .name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .tag {
-    font-size: 12px;
-  }
-
-  .none {
-    padding: 6px 8px;
+    font-weight: 600;
+    word-break: break-all;
   }
 
   .actions {

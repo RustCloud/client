@@ -11,11 +11,13 @@
   let pairs = $state<api.Pair[]>([]);
   let error = $state('');
   let adding = $state(false);
+  let loaded = $state(false);
   let unlisten: UnlistenFn | null = null;
 
   async function load() {
     try {
       pairs = await api.syncPairs();
+      loaded = true;
     } catch (e) {
       const err = api.asError(e);
       if (err.needs_login) onexpired();
@@ -61,30 +63,27 @@
   {#if error}
     <p class="error">{error}</p>
   {/if}
-  {#if adding}
+  {#if !loaded}
+    <p class="muted">Загрузка…</p>
+  {:else if adding || pairs.length === 0}
     <AddPair
-      synced={pairs.map((p) => p.remote)}
+      {pairs}
       ondone={async () => ((adding = false), await load())}
-      oncancel={() => (adding = false)}
+      oncancel={pairs.length ? () => (adding = false) : null}
       {onexpired}
     />
   {:else}
     <div class="top">
-      <button class="primary" onclick={() => (adding = true)}>Добавить папку…</button>
+      <button class="primary" onclick={() => (adding = true)}>Добавить пару папок…</button>
     </div>
-    {#if pairs.length === 0}
-      <p class="muted empty">
-        Синхронизируемых папок нет. Добавьте пару: папку на этом компьютере и папку в облаке — они будут
-        одинаковыми. Синхронизируются только выбранные папки, а не всё облако.
-      </p>
-    {/if}
   {/if}
+  {#if pairs.length}<h2>Синхронизируемые папки</h2>{/if}
   <ul>
     {#each pairs as pair (pair.id)}
       <li class="pair" class:failed={pair.status.state === 'error'}>
         <div class="paths">
           <div class="local" title={pair.local}>{pair.local}</div>
-          <div class="muted">⇅ {pair.remote_path}</div>
+          <div class="muted">⇅ облако: {pair.remote_path === '/' ? 'всё облако' : pair.remote_path}</div>
         </div>
         <div class="status" class:error={pair.status.state === 'error'}>{summary(pair.status)}</div>
         {#if pair.status.confirm_deletions}
@@ -129,8 +128,9 @@
     margin-bottom: 12px;
   }
 
-  .empty {
-    max-width: 480px;
+  h2 {
+    font-size: 15px;
+    margin: 0 0 8px;
   }
 
   ul {

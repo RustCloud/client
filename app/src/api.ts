@@ -71,11 +71,12 @@ export const removeSyncPair = (id: string) => invoke<void>('remove_sync_pair', {
 export const syncNow = (id: string) => invoke<void>('sync_now', { id });
 export const confirmDeletions = (id: string) => invoke<void>('confirm_deletions', { id });
 
-export interface LocalFolder {
-  exists: boolean;
-  is_dir: boolean;
-  entries: number;
+export interface LocalDir {
+  name: string;
+  path: string;
 }
 
 export const createFolder = (parent: string, name: string) => invoke<Node>('create_folder', { parent, name });
-export const localFolder = (path: string) => invoke<LocalFolder>('local_folder', { path });
+export const localDirs = (path: string) => invoke<LocalDir[]>('local_dirs', { path });
+export const localPlaces = () => invoke<LocalDir[]>('local_places');
+export const createLocalDir = (parent: string, name: string) => invoke<LocalDir>('create_local_dir', { parent, name });

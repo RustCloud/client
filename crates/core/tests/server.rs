@@ -3,7 +3,7 @@
 //! tests say so and pass, so `cargo test` works anywhere.
 
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -40,6 +40,8 @@ async fn start_server() -> Option<Server> {
     };
     let dir = tempfile::tempdir().unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let log_path = dir.path().join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
     let child = Command::new(bin)
         .arg("--config")
         .arg(dir.path().join("rustcloud.toml"))
@@ -47,19 +49,32 @@ async fn start_server() -> Option<Server> {
         .env("RUSTCLOUD_DATA_DIR", dir.path().join("data"))
         .env("RUSTCLOUD_DATABASE_URL", format!("sqlite://{}?mode=rwc", dir.path().join("db.sqlite").display()))
         .env("RUSTCLOUD_LOG", "warn")
-        .stdout(Stdio::null())
+        .env("NO_COLOR", "1")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
         .spawn()
         .expect("start rustcloud");
-    let server = Server { url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), child, _dir: dir };
+    let mut server = Server { url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), child, _dir: dir };
 
     let http = reqwest::Client::new();
-    for _ in 0..200 {
+    let started = std::time::Instant::now();
+    // A debug build on a slow CI runner may take a while.
+    while started.elapsed() < Duration::from_secs(60) {
         if http.get(server.url.join("health").unwrap()).send().await.is_ok_and(|r| r.status().is_success()) {
             return Some(server);
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Some(status) = server.child.try_wait().unwrap() {
+            panic!("rustcloud exited with {status}:\n{}", tail(&log_path));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("rustcloud did not start");
+    panic!("rustcloud did not answer within 60 s:\n{}", tail(&log_path));
+}
+
+fn tail(path: &std::path::Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<_> = text.lines().collect();
+    lines[lines.len().saturating_sub(20)..].join("\n")
 }
 
 /// Plays the user in the browser: registers, then allows the device on the consent page.

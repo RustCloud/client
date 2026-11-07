@@ -163,7 +163,7 @@ async fn create_folder(state: State<'_, AppState>, parent: Uuid, name: String) -
 /// Subfolders of a local folder, for the picker.
 #[tauri::command]
 fn local_dirs(path: PathBuf) -> CmdResult<Vec<sync::LocalDir>> {
-    sync::local_dirs(&path).map_err(|e| CmdError::new(format!("{}: {e}", path.display())))
+    sync::local_dirs(&path).map_err(|e| CmdError::new(sync::local_error(&path, &e)))
 }
 
 /// Where the local picker starts.

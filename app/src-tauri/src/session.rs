@@ -83,6 +83,7 @@ pub fn device_name() -> String {
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .or_else(android_model)
         .map(|name| name.trim().to_owned())
         .filter(|name| !name.is_empty());
     let os = std::env::consts::OS;
@@ -90,6 +91,15 @@ pub fn device_name() -> String {
         Some(host) => format!("{host} ({os})"),
         None => format!("RustCloud ({os})"),
     }
+}
+
+/// The phone's model ("Pixel 8"), as Android has no host name to speak of.
+fn android_model() -> Option<String> {
+    if !cfg!(target_os = "android") {
+        return None;
+    }
+    let out = std::process::Command::new("getprop").arg("ro.product.model").output().ok()?;
+    String::from_utf8(out.stdout).ok()
 }
 
 #[cfg(test)]

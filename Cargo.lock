@@ -3039,7 +3039,7 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "rc-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "rc-sync"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "futures-util",
@@ -3304,9 +3304,10 @@ dependencies = [
 
 [[package]]
 name = "rustcloud-client"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
+ "dunce",
  "notify",
  "rc-core",
  "rc-sync",

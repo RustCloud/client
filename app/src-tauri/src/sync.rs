@@ -165,7 +165,7 @@ impl Pairs {
         if !local.exists() {
             std::fs::create_dir_all(&local).map_err(|e| format!("Не удалось создать {}: {e}", local.display()))?;
         }
-        let local = std::fs::canonicalize(&local).map_err(|e| format!("Папка {}: {e}", local.display()))?;
+        let local = dunce::canonicalize(&local).map_err(|e| format!("Папка {}: {e}", local.display()))?;
         if !local.is_dir() {
             return Err(format!("{} — не папка", local.display()));
         }
@@ -266,9 +266,24 @@ pub fn local_dirs(path: &Path) -> std::io::Result<Vec<LocalDir>> {
 }
 
 /// Where the local picker starts: the home folder, then the file system roots
-/// (`/`; drives on Windows).
+/// (`/`; drives on Windows; the shared storage on Android).
 pub fn local_places() -> Vec<LocalDir> {
     let mut places = Vec::new();
+    if cfg!(target_os = "android") {
+        // Needs "access to all files" (MANAGE_EXTERNAL_STORAGE), given in the settings.
+        places.push(LocalDir {
+            name: "Память устройства".into(), path: PathBuf::from("/storage/emulated/0")
+        });
+        if let Ok(cards) = std::fs::read_dir("/storage") {
+            for card in cards.filter_map(|e| e.ok()) {
+                let name = card.file_name().to_string_lossy().into_owned();
+                if !["emulated", "self"].contains(&name.as_str()) && card.path().is_dir() {
+                    places.push(LocalDir { name: format!("Карта памяти {name}"), path: card.path() });
+                }
+            }
+        }
+        return places;
+    }
     if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
         places.push(LocalDir { name: "Домашняя папка".into(), path: PathBuf::from(home) });
     }
@@ -285,6 +300,16 @@ pub fn local_places() -> Vec<LocalDir> {
     places
 }
 
+/// Why a local folder cannot be read, for the user.
+pub fn local_error(path: &Path, e: &std::io::Error) -> String {
+    if cfg!(target_os = "android") && e.kind() == std::io::ErrorKind::PermissionDenied {
+        return "Нет доступа к файлам. Разрешите его: Настройки → Приложения → RustCloud → Разрешения → \
+                Файлы и медиа → «Разрешить управление всеми файлами»"
+            .into();
+    }
+    format!("{}: {e}", path.display())
+}
+
 /// A new folder in a local folder.
 pub fn create_local_dir(parent: &Path, name: &str) -> Result<LocalDir, String> {
     let name = name.trim();
@@ -294,7 +319,7 @@ pub fn create_local_dir(parent: &Path, name: &str) -> Result<LocalDir, String> {
     let path = parent.join(name);
     std::fs::create_dir(&path).map_err(|e| match e.kind() {
         std::io::ErrorKind::AlreadyExists => format!("«{name}» здесь уже есть"),
-        _ => format!("Не удалось создать {}: {e}", path.display()),
+        _ => format!("Не удалось создать папку. {}", local_error(&path, &e)),
     })?;
     Ok(LocalDir { name: name.into(), path })
 }

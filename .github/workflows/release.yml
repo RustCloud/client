@@ -99,7 +99,7 @@ jobs:
         run: |
           mkdir out
           while IFS= read -r pattern; do
-            [ -n "$pattern" ] && cp -v $pattern out/
+            if [ -n "$pattern" ]; then cp -v $pattern out/; fi
           done <<< "${{ matrix.files }}"
 
       - uses: actions/upload-artifact@v7

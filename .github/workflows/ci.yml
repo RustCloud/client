@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental builds don't help a fresh checkout and take gigabytes of disk.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  # What Tauri needs on Linux (WebKitGTK and friends).
+  LINUX_DEPS: libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev file
+
+jobs:
+  core:
+    name: Core (fmt, clippy, tests against a real server)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The integration tests start a RustCloud server built from its main branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: RustCloud/server
+          path: server
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            . -> target
+            server -> target
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy -p rc-core --all-targets --locked -- -D warnings
+
+      - name: Build the server
+        working-directory: server
+        run: cargo build -p rustcloud-server --locked
+
+      - name: Test
+        run: cargo test -p rc-core --locked
+        env:
+          RUSTCLOUD_BIN: ${{ github.workspace }}/server/target/debug/rustcloud
+
+  app:
+    name: App (svelte-check, clippy, tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # The Rust side embeds app/dist, so the UI is built first.
+      - name: UI
+        working-directory: app
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
+
+      - name: Clippy
+        run: cargo clippy -p rustcloud-client --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test -p rustcloud-client --locked

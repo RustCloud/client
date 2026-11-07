@@ -17,7 +17,6 @@ use std::fmt;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -80,7 +79,7 @@ impl Default for Pkce {
 /// 32 random bytes → 43 URL-safe characters.
 fn random_token(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
-    rand::rngs::OsRng.fill_bytes(&mut buf);
+    rand::fill(&mut buf[..]); // ThreadRng: a CSPRNG seeded from the OS
     URL_SAFE_NO_PAD.encode(buf)
 }
 

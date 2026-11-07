@@ -8,6 +8,10 @@ updates:
     directory: /app
     schedule:
       interval: weekly
+    ignore:
+      # svelte-check supports TypeScript 5 and 6 only (peer dependency); lift when it takes 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

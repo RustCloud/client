@@ -187,6 +187,8 @@ mod tests {
         std::fs::write(root.join(".env"), "x").unwrap();
         std::fs::write(root.join(".git/HEAD"), "x").unwrap();
         std::fs::write(root.join(".rcsync-123.part"), "x").unwrap();
+        // A file name with `\` (the server refuses it); on Windows that is a separator.
+        #[cfg(unix)]
         std::fs::write(root.join("back\\slash"), "x").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(root.join(".env"), root.join("link")).unwrap();
@@ -196,10 +198,11 @@ mod tests {
         assert_eq!(paths, [".env", "docs", "docs/deep", "docs/deep/a.txt"]);
         assert_eq!(scan.entries["docs/deep/a.txt"].size, 3);
         assert!(scan.entries["docs"].is_dir);
-        let skipped: Vec<_> = scan.skipped.iter().map(|(p, _)| p.as_str()).collect();
         #[cfg(unix)]
-        assert!(skipped.contains(&"link"));
-        assert!(skipped.contains(&"back\\slash"));
+        {
+            let skipped: Vec<_> = scan.skipped.iter().map(|(p, _)| p.as_str()).collect();
+            assert!(skipped.contains(&"link") && skipped.contains(&"back\\slash"));
+        }
         assert!(scan.unreadable.is_empty());
     }
 

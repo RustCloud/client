@@ -6,6 +6,21 @@
 
 **Статус: начало работы.** Есть вход через браузер и просмотр папок. Дальше — синхронизация.
 
+## Установка
+
+Готовые сборки — на странице [Releases](https://github.com/RustCloud/client/releases):
+
+| Файл | Для чего |
+|------|----------|
+| `RustCloud_<версия>_amd64.deb` | Debian, Ubuntu: `sudo apt install ./RustCloud_*.deb` |
+| `RustCloud-<версия>-1.x86_64.rpm` | Fedora, openSUSE: `sudo dnf install ./RustCloud-*.rpm` |
+| `RustCloud_<версия>_amd64.AppImage` | любой Linux: всё своё внутри, `chmod +x` и запустить |
+| `rustcloud-client-<версия>-linux-x86_64.tar.gz` | только исполняемый файл, без установки |
+
+Исполняемому файлу из архива нужны WebKitGTK и GTK 3 из системы
+(Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`; в Fedora — `webkit2gtk4.1`).
+Проверить загрузку: `sha256sum -c SHA256SUMS --ignore-missing`.
+
 ## Устройство
 
 ```text

@@ -36,12 +36,16 @@ jobs:
               target/release/bundle/deb/*.deb
               target/release/bundle/rpm/*.rpm
               target/release/bundle/appimage/*.AppImage
+            # The bare executable as well, in rustcloud-client-<version>-<name>.tar.gz
+            # (.zip on Windows).
+            archive: rustcloud-client
 
           # Next platforms — uncomment when they are ready:
           #
           # - name: windows-x86_64
           #   os: windows-2025
           #   bundles: nsis,msi
+          #   archive: rustcloud-client.exe
           #   files: |
           #     target/release/bundle/nsis/*.exe
           #     target/release/bundle/msi/*.msi
@@ -101,6 +105,22 @@ jobs:
           while IFS= read -r pattern; do
             if [ -n "$pattern" ]; then cp -v $pattern out/; fi
           done <<< "${{ matrix.files }}"
+
+      - name: Archive the executable
+        if: matrix.archive
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          dir="rustcloud-client-$version-${{ matrix.name }}"
+          mkdir "$dir"
+          cp "target/release/${{ matrix.archive }}" README.md "$dir/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "out/$dir.zip" "$dir" >/dev/null
+          else
+            strip "$dir/${{ matrix.archive }}"
+            tar czf "out/$dir.tar.gz" "$dir"
+          fi
+          ls -l out/
 
       - uses: actions/upload-artifact@v7
         with:

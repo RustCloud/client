@@ -51,10 +51,18 @@ jobs:
         working-directory: server
         run: cargo build -p rustcloud-server --locked
 
+      # Failures also become annotations, readable on the run's page at a glance.
       - name: Test
-        run: cargo test -p rc-core --locked
+        run: |
+          set +e
+          cargo test -p rc-core --locked 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E -A25 'panicked at|^error' test.log | head -50 | sed 's/^/::error title=Test::/'
+          fi
+          exit "$status"
         env:
-          RUSTCLOUD_BIN: ${{ github.workspace }}/server/target/debug/rustcloud
+          RC_TEST_SERVER: ${{ github.workspace }}/server/target/debug/rustcloud
 
   app:
     name: App (svelte-check, clippy, tests)

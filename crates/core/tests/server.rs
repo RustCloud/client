@@ -1,9 +1,9 @@
-//! Against a real RustCloud server: `RUSTCLOUD_BIN=/path/to/rustcloud cargo test`.
+//! Against a real RustCloud server: `RC_TEST_SERVER=/path/to/rustcloud cargo test`.
 //! Without the variable (and without `../rustcloud/target/debug/rustcloud`) the
 //! tests say so and pass, so `cargo test` works anywhere.
 
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -26,7 +26,7 @@ impl Drop for Server {
 }
 
 fn server_binary() -> Option<PathBuf> {
-    if let Some(bin) = std::env::var_os("RUSTCLOUD_BIN") {
+    if let Some(bin) = std::env::var_os("RC_TEST_SERVER") {
         return Some(bin.into());
     }
     let sibling = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../rustcloud/target/debug/rustcloud");
@@ -35,31 +35,53 @@ fn server_binary() -> Option<PathBuf> {
 
 async fn start_server() -> Option<Server> {
     let Some(bin) = server_binary() else {
-        eprintln!("skipped: set RUSTCLOUD_BIN to a rustcloud binary to run this test");
+        eprintln!("skipped: set RC_TEST_SERVER to a rustcloud binary to run this test");
         return None;
     };
     let dir = tempfile::tempdir().unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let child = Command::new(bin)
+    let log_path = dir.path().join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut command = Command::new(bin);
+    // The server takes every RUSTCLOUD_* variable for a setting and refuses unknown ones.
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("RUSTCLOUD_") {
+            command.env_remove(key);
+        }
+    }
+    let child = command
         .arg("--config")
         .arg(dir.path().join("rustcloud.toml"))
         .env("RUSTCLOUD_LISTEN", format!("127.0.0.1:{port}"))
         .env("RUSTCLOUD_DATA_DIR", dir.path().join("data"))
         .env("RUSTCLOUD_DATABASE_URL", format!("sqlite://{}?mode=rwc", dir.path().join("db.sqlite").display()))
         .env("RUSTCLOUD_LOG", "warn")
-        .stdout(Stdio::null())
+        .env("NO_COLOR", "1")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
         .spawn()
         .expect("start rustcloud");
-    let server = Server { url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), child, _dir: dir };
+    let mut server = Server { url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), child, _dir: dir };
 
     let http = reqwest::Client::new();
-    for _ in 0..200 {
+    let started = std::time::Instant::now();
+    // A debug build on a slow CI runner may take a while.
+    while started.elapsed() < Duration::from_secs(60) {
         if http.get(server.url.join("health").unwrap()).send().await.is_ok_and(|r| r.status().is_success()) {
             return Some(server);
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Some(status) = server.child.try_wait().unwrap() {
+            panic!("rustcloud exited with {status}:\n{}", tail(&log_path));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("rustcloud did not start");
+    panic!("rustcloud did not answer within 60 s:\n{}", tail(&log_path));
+}
+
+fn tail(path: &std::path::Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<_> = text.lines().collect();
+    lines[lines.len().saturating_sub(20)..].join("\n")
 }
 
 /// Plays the user in the browser: registers, then allows the device on the consent page.

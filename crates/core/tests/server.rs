@@ -1,131 +1,17 @@
-//! Against a real RustCloud server: `RC_TEST_SERVER=/path/to/rustcloud cargo test`.
-//! Without the variable (and without `../rustcloud/target/debug/rustcloud`) the
-//! tests say so and pass, so `cargo test` works anywhere.
+//! Against a real RustCloud server (see `rc_core::testing`):
+//! `RC_TEST_SERVER=/path/to/rustcloud cargo test -p rc-core --features testing`.
 
-use std::path::PathBuf;
-use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use rc_core::auth::login_with_browser;
+use rc_core::changes::ChangeKind;
+use rc_core::testing::TestServer;
 use rc_core::{Client, NodeUpdate, Tokens};
-use serde_json::json;
-use url::Url;
-
-struct Server {
-    url: Url,
-    child: Child,
-    _dir: tempfile::TempDir,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn server_binary() -> Option<PathBuf> {
-    if let Some(bin) = std::env::var_os("RC_TEST_SERVER") {
-        return Some(bin.into());
-    }
-    let sibling = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../rustcloud/target/debug/rustcloud");
-    sibling.exists().then_some(sibling)
-}
-
-async fn start_server() -> Option<Server> {
-    let Some(bin) = server_binary() else {
-        eprintln!("skipped: set RC_TEST_SERVER to a rustcloud binary to run this test");
-        return None;
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let log_path = dir.path().join("server.log");
-    let log = std::fs::File::create(&log_path).unwrap();
-    let mut command = Command::new(bin);
-    // The server takes every RUSTCLOUD_* variable for a setting and refuses unknown ones.
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("RUSTCLOUD_") {
-            command.env_remove(key);
-        }
-    }
-    let child = command
-        .arg("--config")
-        .arg(dir.path().join("rustcloud.toml"))
-        .env("RUSTCLOUD_LISTEN", format!("127.0.0.1:{port}"))
-        .env("RUSTCLOUD_DATA_DIR", dir.path().join("data"))
-        .env("RUSTCLOUD_DATABASE_URL", format!("sqlite://{}?mode=rwc", dir.path().join("db.sqlite").display()))
-        .env("RUSTCLOUD_LOG", "warn")
-        .env("NO_COLOR", "1")
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("start rustcloud");
-    let mut server = Server { url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), child, _dir: dir };
-
-    let http = reqwest::Client::new();
-    let started = std::time::Instant::now();
-    // A debug build on a slow CI runner may take a while.
-    while started.elapsed() < Duration::from_secs(60) {
-        if http.get(server.url.join("health").unwrap()).send().await.is_ok_and(|r| r.status().is_success()) {
-            return Some(server);
-        }
-        if let Some(status) = server.child.try_wait().unwrap() {
-            panic!("rustcloud exited with {status}:\n{}", tail(&log_path));
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("rustcloud did not answer within 60 s:\n{}", tail(&log_path));
-}
-
-fn tail(path: &std::path::Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let lines: Vec<_> = text.lines().collect();
-    lines[lines.len().saturating_sub(20)..].join("\n")
-}
-
-/// Plays the user in the browser: registers, then allows the device on the consent page.
-async fn log_in(server: &Url) -> Tokens {
-    let browser = reqwest::Client::builder().cookie_store(true).build().unwrap();
-    let account = json!({ "username": "alice", "password": "correct-horse-1" });
-    let reply = browser.post(server.join("api/v1/auth/register").unwrap()).json(&account).send().await.unwrap();
-    assert!(reply.status().is_success(), "register: {}", reply.text().await.unwrap());
-
-    let server_url = server.clone();
-    login_with_browser(&Client::http(), server, "RustCloud Test", "CI", move |authorize| {
-        let query: std::collections::HashMap<_, _> = authorize.query_pairs().into_owned().collect();
-        tokio::spawn(async move {
-            let allow = json!({
-                "client_id": query["client_id"], "device_name": query["device_name"],
-                "redirect_uri": query["redirect_uri"], "code_challenge": query["code_challenge"],
-                "code_challenge_method": query["code_challenge_method"],
-            });
-            let reply = browser
-                .post(server_url.join("api/v1/auth/authorize").unwrap())
-                .header("X-Requested-With", "XMLHttpRequest")
-                .json(&allow)
-                .send()
-                .await
-                .unwrap();
-            assert!(reply.status().is_success(), "authorize: {}", reply.text().await.unwrap());
-            let code: serde_json::Value = reply.json().await.unwrap();
-            let mut back = Url::parse(&query["redirect_uri"]).unwrap();
-            back.query_pairs_mut()
-                .append_pair("code", code["code"].as_str().unwrap())
-                .append_pair("state", &query["state"]);
-            let page = reqwest::get(back).await.unwrap();
-            assert!(page.text().await.unwrap().contains("Готово"));
-        });
-        Ok(())
-    })
-    .await
-    .expect("login")
-}
 
 #[tokio::test]
 async fn login_files_and_token_renewal() {
-    let Some(server) = start_server().await else { return };
-    let tokens = log_in(&server.url).await;
+    let Some(server) = TestServer::start().await else { return };
+    let tokens = server.log_in("alice", "CI").await;
 
     let saved: Arc<Mutex<Vec<Tokens>>> = Arc::default();
     let client = Client::new(Client::http(), server.url.clone(), tokens.clone()).on_tokens({
@@ -193,4 +79,37 @@ async fn login_files_and_token_renewal() {
     client.logout().await.unwrap();
     let gone = client.me().await.unwrap_err();
     assert!(gone.needs_login(), "{gone}");
+}
+
+#[tokio::test]
+async fn the_change_feed_and_its_hints() {
+    let Some(server) = TestServer::start().await else { return };
+    let client = server.client("alice", "CI").await;
+    let root = client.root().await.unwrap();
+
+    let start = client.changes(None).await.unwrap();
+    assert!(start.changes.is_empty());
+    let mut hints = client.watch_changes().await.unwrap();
+
+    let docs = client.create_folder(root.id, "Docs").await.unwrap();
+    let hint = tokio::time::timeout(Duration::from_secs(10), hints.next()).await.expect("a hint");
+    assert!(hint.unwrap());
+
+    let local = tempfile::tempdir().unwrap();
+    let path = local.path().join("a.txt");
+    std::fs::write(&path, "a").unwrap();
+    let file = client.upload(docs.id, "a.txt", &path, false).await.unwrap();
+    client.delete(file.id).await.unwrap();
+
+    let page = client.changes(Some(&start.cursor)).await.unwrap();
+    let seen: Vec<_> = page.changes.iter().map(|c| (c.id, c.kind)).collect();
+    assert_eq!(
+        seen,
+        vec![(docs.id, ChangeKind::Created), (file.id, ChangeKind::Created), (file.id, ChangeKind::Deleted)]
+    );
+    assert!(!page.more);
+    let empty = client.changes(Some(&page.cursor)).await.unwrap();
+    assert!(empty.changes.is_empty());
+    let forged = client.changes(Some("not-a-cursor")).await.unwrap_err();
+    assert_eq!(forged.code(), Some("INVALID_CURSOR"));
 }

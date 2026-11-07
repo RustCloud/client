@@ -1,0 +1,23 @@
+[package]
+name = "rc-sync"
+description = "RustCloud client: two-way sync of a local folder with a folder on the server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rc-core.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# SQLite built in: no system library to find on Windows or Android.
+rusqlite = { version = "0.41", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest.workspace = true

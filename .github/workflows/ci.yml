@@ -130,7 +130,15 @@ jobs:
 
       # The sync engine on NTFS: paths, renames over open files, times.
       - name: Test
-        run: cargo test --workspace --locked
+        shell: bash
+        run: |
+          set +e
+          cargo test --workspace --locked --no-fail-fast 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E -A25 'panicked at|^error' test.log | head -80 | sed 's/^/::error title=Test::/'
+          fi
+          exit "$status"
 
   android:
     name: Android (clippy for aarch64)

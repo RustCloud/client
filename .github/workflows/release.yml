@@ -102,7 +102,7 @@ jobs:
             [ -n "$pattern" ] && cp -v $pattern out/
           done <<< "${{ matrix.files }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: out/*

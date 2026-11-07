@@ -40,7 +40,7 @@ npm run tauri build    # пакеты в target/release/bundle/
 ```sh
 cargo test --workspace
 # с настоящим сервером (интеграционные тесты rc-core):
-RUSTCLOUD_BIN=../server/target/debug/rustcloud cargo test -p rc-core
+RC_TEST_SERVER=../server/target/debug/rustcloud cargo test -p rc-core
 cd app && npm run check
 ```
 

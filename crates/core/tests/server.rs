@@ -1,4 +1,4 @@
-//! Against a real RustCloud server: `RUSTCLOUD_BIN=/path/to/rustcloud cargo test`.
+//! Against a real RustCloud server: `RC_TEST_SERVER=/path/to/rustcloud cargo test`.
 //! Without the variable (and without `../rustcloud/target/debug/rustcloud`) the
 //! tests say so and pass, so `cargo test` works anywhere.
 
@@ -26,7 +26,7 @@ impl Drop for Server {
 }
 
 fn server_binary() -> Option<PathBuf> {
-    if let Some(bin) = std::env::var_os("RUSTCLOUD_BIN") {
+    if let Some(bin) = std::env::var_os("RC_TEST_SERVER") {
         return Some(bin.into());
     }
     let sibling = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../rustcloud/target/debug/rustcloud");
@@ -35,14 +35,21 @@ fn server_binary() -> Option<PathBuf> {
 
 async fn start_server() -> Option<Server> {
     let Some(bin) = server_binary() else {
-        eprintln!("skipped: set RUSTCLOUD_BIN to a rustcloud binary to run this test");
+        eprintln!("skipped: set RC_TEST_SERVER to a rustcloud binary to run this test");
         return None;
     };
     let dir = tempfile::tempdir().unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let log_path = dir.path().join("server.log");
     let log = std::fs::File::create(&log_path).unwrap();
-    let child = Command::new(bin)
+    let mut command = Command::new(bin);
+    // The server takes every RUSTCLOUD_* variable for a setting and refuses unknown ones.
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("RUSTCLOUD_") {
+            command.env_remove(key);
+        }
+    }
+    let child = command
         .arg("--config")
         .arg(dir.path().join("rustcloud.toml"))
         .env("RUSTCLOUD_LISTEN", format!("127.0.0.1:{port}"))

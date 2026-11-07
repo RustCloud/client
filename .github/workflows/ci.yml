@@ -62,7 +62,7 @@ jobs:
           fi
           exit "$status"
         env:
-          RUSTCLOUD_BIN: ${{ github.workspace }}/server/target/debug/rustcloud
+          RC_TEST_SERVER: ${{ github.workspace }}/server/target/debug/rustcloud
 
   app:
     name: App (svelte-check, clippy, tests)

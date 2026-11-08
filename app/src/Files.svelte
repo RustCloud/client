@@ -9,7 +9,7 @@
   let showHidden = $state(false);
   let visible = $derived(listing ? listing.children.filter((n) => showHidden || !n.name.startsWith('.')) : []);
 
-  async function open(folder: string | null) {
+  async function load(folder: string | null) {
     error = '';
     try {
       listing = await api.list(folder);
@@ -20,10 +20,26 @@
     }
   }
 
+  // Each folder opened is a history entry, so Android's Back button (which goes
+  // back in the WebView's history) returns to the previous folder; at the first
+  // one it leaves the app, as usual.
+  function open(folder: string | null) {
+    if (folder === (listing?.folder.parent_id === null ? null : listing?.folder.id)) return;
+    history.pushState({ folder }, '');
+    load(folder);
+  }
+
+  function back(event: PopStateEvent) {
+    load(event.state?.folder ?? null);
+  }
+
   $effect(() => {
-    open(null);
+    history.replaceState({ folder: null }, '');
+    load(null);
   });
 </script>
+
+<svelte:window onpopstate={back} />
 
 <header>
   <nav aria-label="Путь">
@@ -42,7 +58,7 @@
 </header>
 
 {#if error}
-  <p class="error pad">{error} <button onclick={() => open(listing?.folder.id ?? null)}>Повторить</button></p>
+  <p class="error pad">{error} <button onclick={() => load(listing?.folder.id ?? null)}>Повторить</button></p>
 {/if}
 
 <main>
@@ -135,9 +151,11 @@
     text-align: left;
   }
 
-  button.row:hover,
-  div.row:hover {
-    background: var(--hover);
+  @media (hover: hover) {
+    button.row:hover,
+    div.row:hover {
+      background: var(--hover);
+    }
   }
 
   .name {

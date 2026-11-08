@@ -37,6 +37,13 @@ body {
 }
 
 body {
+  /* Touch: no grey flash on tap, no text selection on a long press, no
+     rubber band at the edges, no double-tap zoom. Inputs stay selectable. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+  touch-action: manipulation;
   background: var(--bg);
   color: var(--text);
   font:
@@ -65,7 +72,19 @@ button {
   padding: 6px 12px;
 }
 
-button:hover:not(:disabled) {
+input {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Only with a mouse: on touch screens :hover sticks after a tap. */
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    background: var(--hover);
+  }
+}
+
+button:active:not(:disabled) {
   background: var(--hover);
 }
 

@@ -115,6 +115,10 @@ jobs:
           manifest=src-tauri/gen/android/app/src/main/AndroidManifest.xml
           sed -i 's#<application#<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\n    <application#' "$manifest"
           grep -q MANAGE_EXTERNAL_STORAGE "$manifest"
+          # Ours: keeps the page clear of the status bar, navigation bar and keyboard.
+          activity=$(find src-tauri/gen/android/app/src/main -name MainActivity.kt)
+          test -n "$activity"
+          cp src-tauri/android/MainActivity.kt "$activity"
           npm run tauri android build -- --ci --apk --target aarch64 armv7 x86_64
 
       - name: Sign the APK

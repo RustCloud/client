@@ -140,7 +140,8 @@ jobs:
           "$tools/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KEYSTORE_PASSWORD \
             --ks-key-alias "$KEY_ALIAS" --out "out/RustCloud_${version}_android.apk" "$RUNNER_TEMP/aligned.apk"
           "$tools/apksigner" verify --print-certs "out/RustCloud_${version}_android.apk"
-          rm -f "$RUNNER_TEMP/release.jks"
+          # The v4 signature file is for incremental installs from a computer (adb), not for users.
+          rm -f "$RUNNER_TEMP/release.jks" out/*.idsig
 
       - name: Collect the packages
         shell: bash

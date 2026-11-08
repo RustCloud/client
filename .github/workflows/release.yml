@@ -100,11 +100,18 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           set -o pipefail
-          npm run tauri build -- --bundles ${{ matrix.bundles }} 2>&1 | tee build.log || {
-            # The log's end as annotations: readable on the run's page without logging in.
-            grep -v '^\s*$' build.log | tail -40 | sed 's/^/::error title=Build::/'
-            exit 1
-          }
+          # Bundling downloads tools (linuxdeploy, NSIS, WiX) that sometimes time
+          # out: a second try only redoes what failed.
+          for attempt in 1 2; do
+            npm run tauri build -- --bundles ${{ matrix.bundles }} 2>&1 | tee build.log && break
+            if [ "$attempt" = 2 ]; then
+              # The log's end in one annotation: readable on the run's page without logging in.
+              echo "::error title=Build::$(grep -v '^\s*$' build.log | tail -40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r//g;s/\n/%0A/g')"
+              exit 1
+            fi
+            echo "::warning::Build failed (attempt $attempt), retrying"
+            sleep 30
+          done
 
       # The Gradle project (src-tauri/gen/android) is generated here, not kept in git.
       - name: Build (Android)
@@ -124,9 +131,20 @@ jobs:
           activity=$(find src-tauri/gen/android/app/src/main -name MainActivity.kt)
           test -n "$activity"
           cp src-tauri/android/MainActivity.kt "$activity"
+          # services.gradle.org is sometimes slow: a longer timeout than the
+          # wrapper's 10 s, and Gradle fetched first, with retries.
+          wrapper=src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's/^networkTimeout=.*/networkTimeout=120000/' "$wrapper"
+          grep -q '^networkTimeout=' "$wrapper" || echo 'networkTimeout=120000' >> "$wrapper"
+          for attempt in 1 2 3 4; do
+            (cd src-tauri/gen/android && ./gradlew --version >/dev/null) && break
+            [ "$attempt" = 4 ] && exit 1
+            echo "::warning::Fetching Gradle failed (attempt $attempt), retrying"
+            sleep $((attempt * 20))
+          done
           set -o pipefail
           npm run tauri android build -- --ci --apk --target aarch64 armv7 x86_64 2>&1 | tee build.log || {
-            grep -v '^\s*$' build.log | grep -v '^> ' | tail -40 | sed 's/^/::error title=Build::/'
+            echo "::error title=Build::$(grep -v '^\s*$' build.log | grep -v 'Io(Env' | tail -40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r//g;s/\n/%0A/g')"
             exit 1
           }
 

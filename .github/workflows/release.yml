@@ -99,7 +99,12 @@ jobs:
         shell: bash
         run: |
           npm ci --no-audit --no-fund
-          npm run tauri build -- --bundles ${{ matrix.bundles }}
+          set -o pipefail
+          npm run tauri build -- --bundles ${{ matrix.bundles }} 2>&1 | tee build.log || {
+            # The log's end as annotations: readable on the run's page without logging in.
+            grep -v '^\s*$' build.log | tail -40 | sed 's/^/::error title=Build::/'
+            exit 1
+          }
 
       # The Gradle project (src-tauri/gen/android) is generated here, not kept in git.
       - name: Build (Android)
@@ -119,7 +124,11 @@ jobs:
           activity=$(find src-tauri/gen/android/app/src/main -name MainActivity.kt)
           test -n "$activity"
           cp src-tauri/android/MainActivity.kt "$activity"
-          npm run tauri android build -- --ci --apk --target aarch64 armv7 x86_64
+          set -o pipefail
+          npm run tauri android build -- --ci --apk --target aarch64 armv7 x86_64 2>&1 | tee build.log || {
+            grep -v '^\s*$' build.log | grep -v '^> ' | tail -40 | sed 's/^/::error title=Build::/'
+            exit 1
+          }
 
       - name: Sign the APK
         if: matrix.android

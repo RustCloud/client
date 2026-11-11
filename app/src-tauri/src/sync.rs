@@ -68,6 +68,7 @@ pub struct Pairs {
 }
 
 /// All the pairs at once, for the tray.
+#[cfg(desktop)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Overall {
     pub paused: bool,
@@ -181,6 +182,7 @@ impl Pairs {
         }
     }
 
+    #[cfg(desktop)]
     pub fn overall(&self) -> Overall {
         let running = self.running.lock().unwrap();
         let states: Vec<&str> = running.values().map(|r| r.status.lock().unwrap().state).collect();
@@ -280,6 +282,7 @@ impl Pairs {
         Ok(())
     }
 
+    #[cfg(desktop)]
     pub fn sync_all(&self) {
         self.running.lock().unwrap().values().for_each(|r| r.runner.wake());
     }

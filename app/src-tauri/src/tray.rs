@@ -187,8 +187,8 @@ fn with_badge(icon: &Image<'_>, color: [u8; 3]) -> Image<'static> {
     let (w, h) = (icon.width(), icon.height());
     let mut px = icon.rgba().to_vec();
     let size = w.min(h) as f32;
-    let r = size * 0.24;
-    let ring = size * 0.07;
+    let r = size * 0.12;
+    let ring = size * 0.05;
     let (cx, cy) = (w as f32 - r - ring, h as f32 - r - ring);
     for y in 0..h {
         for x in 0..w {

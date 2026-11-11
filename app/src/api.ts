@@ -44,7 +44,7 @@ export const list = (folder: string | null) => invoke<Listing>('list', { folder 
 // Synced folders (app/src-tauri/src/sync.rs).
 
 export interface PairStatus {
-  state: 'idle' | 'syncing' | 'error';
+  state: 'idle' | 'syncing' | 'error' | 'paused';
   last_sync: string | null;
   uploaded: number;
   downloaded: number;
@@ -66,6 +66,8 @@ export interface Pair {
 }
 
 export const syncPairs = () => invoke<Pair[]>('sync_pairs');
+export const syncPaused = () => invoke<boolean>('sync_paused');
+export const setSyncPaused = (paused: boolean) => invoke<void>('set_sync_paused', { paused });
 export const addSyncPair = (local: string, remote: string) => invoke<Pair>('add_sync_pair', { local, remote });
 export const removeSyncPair = (id: string) => invoke<void>('remove_sync_pair', { id });
 export const syncNow = (id: string) => invoke<void>('sync_now', { id });

@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rc_core::Client;
@@ -28,7 +29,7 @@ pub struct PairConfig {
 /// What the UI shows for a pair.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PairStatus {
-    /// `idle`, `syncing` or `error`.
+    /// `idle`, `syncing`, `error` or `paused`.
     pub state: &'static str,
     /// RFC 3339.
     pub last_sync: Option<String>,
@@ -62,6 +63,17 @@ pub struct Pairs {
     configs: Mutex<Vec<PairConfig>>,
     running: Arc<Mutex<HashMap<Uuid, Running>>>,
     hints: Mutex<Option<JoinHandle<()>>>,
+    /// Paused by the user: nothing runs until resumed (or the app restarts).
+    paused: AtomicBool,
+}
+
+/// All the pairs at once, for the tray.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overall {
+    pub paused: bool,
+    pub pairs: usize,
+    pub syncing: usize,
+    pub errors: usize,
 }
 
 impl Pairs {
@@ -71,7 +83,13 @@ impl Pairs {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        Self { dir, configs: Mutex::new(configs), running: Arc::default(), hints: Mutex::new(None) }
+        Self {
+            dir,
+            configs: Mutex::new(configs),
+            running: Arc::default(),
+            hints: Mutex::new(None),
+            paused: AtomicBool::new(false),
+        }
     }
 
     fn save(&self, configs: &[PairConfig]) -> std::io::Result<()> {
@@ -83,6 +101,9 @@ impl Pairs {
 
     /// Starts the pairs of the logged-in server, and one listener for its hints.
     pub fn start(&self, app: &AppHandle, client: &Client) {
+        if self.is_paused() {
+            return;
+        }
         let server = client.server().to_string();
         let configs: Vec<PairConfig> =
             self.configs.lock().unwrap().iter().filter(|c| c.server == server).cloned().collect();
@@ -117,9 +138,14 @@ impl Pairs {
         let runner = Runner::spawn(engine.clone(), {
             let (app, status) = (app.clone(), status.clone());
             move |update| {
-                let mut s = status.lock().unwrap();
-                apply(&mut s, update);
-                let _ = app.emit("sync-status", serde_json::json!({ "id": id, "status": &*s }));
+                let event = {
+                    let mut s = status.lock().unwrap();
+                    apply(&mut s, update);
+                    serde_json::json!({ "id": id, "status": &*s })
+                };
+                let _ = app.emit("sync-status", event);
+                // With the lock let go: the summary takes every pair's.
+                crate::status_changed(&app);
             }
         });
         // Without a watcher (an odd file system), the timer and the hints still work.
@@ -137,7 +163,37 @@ impl Pairs {
         }
     }
 
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Stops every pair until [`Pairs::resume`]; a sync under way is cut short
+    /// and redone later, as after a crash.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::Relaxed);
+        self.stop();
+    }
+
+    pub fn resume(&self, app: &AppHandle, client: Option<&Client>) {
+        self.paused.store(false, Ordering::Relaxed);
+        if let Some(client) = client {
+            self.start(app, client);
+        }
+    }
+
+    pub fn overall(&self) -> Overall {
+        let running = self.running.lock().unwrap();
+        let states: Vec<&str> = running.values().map(|r| r.status.lock().unwrap().state).collect();
+        Overall {
+            paused: self.is_paused(),
+            pairs: states.len(),
+            syncing: states.iter().filter(|s| **s == "syncing").count(),
+            errors: states.iter().filter(|s| **s == "error").count(),
+        }
+    }
+
     pub fn list(&self, server: &str) -> Vec<PairView> {
+        let paused = self.is_paused().then(|| PairStatus { state: "paused", ..Default::default() });
         let running = self.running.lock().unwrap();
         self.configs
             .lock()
@@ -146,7 +202,9 @@ impl Pairs {
             .filter(|c| c.server == server)
             .map(|c| PairView {
                 config: c.clone(),
-                status: running.get(&c.id).map(|r| r.status.lock().unwrap().clone()).unwrap_or_default(),
+                status: paused.clone().unwrap_or_else(|| {
+                    running.get(&c.id).map(|r| r.status.lock().unwrap().clone()).unwrap_or_default()
+                }),
             })
             .collect()
     }
@@ -205,9 +263,9 @@ impl Pairs {
             self.save(&configs).map_err(|e| format!("Не удалось сохранить: {e}"))?;
             config
         };
-        self.start_one(app, client, &config);
         self.start(app, client);
-        Ok(PairView { config, status: PairStatus { state: "syncing", ..Default::default() } })
+        let state = if self.is_paused() { "paused" } else { "syncing" };
+        Ok(PairView { config, status: PairStatus { state, ..Default::default() } })
     }
 
     /// Stops syncing a pair; the files stay on both sides.
@@ -220,6 +278,10 @@ impl Pairs {
             let _ = std::fs::remove_file(self.dir.join(format!("{id}.{ext}")));
         }
         Ok(())
+    }
+
+    pub fn sync_all(&self) {
+        self.running.lock().unwrap().values().for_each(|r| r.runner.wake());
     }
 
     pub fn sync_now(&self, id: Uuid) {

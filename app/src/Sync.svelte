@@ -12,11 +12,12 @@
   let error = $state('');
   let adding = $state(false);
   let loaded = $state(false);
-  let unlisten: UnlistenFn | null = null;
+  let paused = $state(false);
+  let unlisten: UnlistenFn[] = [];
 
   async function load() {
     try {
-      pairs = await api.syncPairs();
+      [pairs, paused] = await Promise.all([api.syncPairs(), api.syncPaused()]);
       loaded = true;
     } catch (e) {
       const err = api.asError(e);
@@ -27,14 +28,18 @@
 
   onMount(async () => {
     await load();
-    unlisten = await listen<{ id: string; status: api.PairStatus }>('sync-status', (event) => {
-      const pair = pairs.find((p) => p.id === event.payload.id);
-      if (pair) pair.status = event.payload.status;
-      if (event.payload.status.needs_login) onexpired();
-    });
+    unlisten.push(
+      await listen<{ id: string; status: api.PairStatus }>('sync-status', (event) => {
+        const pair = pairs.find((p) => p.id === event.payload.id);
+        if (pair) pair.status = event.payload.status;
+        if (event.payload.status.needs_login) onexpired();
+      }),
+      // Paused or resumed here or from the tray.
+      await listen<boolean>('sync-paused', load),
+    );
   });
 
-  onDestroy(() => unlisten?.());
+  onDestroy(() => unlisten.forEach((u) => u()));
 
   async function remove(pair: api.Pair) {
     const sure = await ask(`Перестать синхронизировать ${pair.local}? Файлы останутся и здесь, и на сервере.`, {
@@ -47,6 +52,7 @@
   }
 
   function summary(s: api.PairStatus): string {
+    if (s.state === 'paused') return 'Приостановлено';
     if (s.state === 'syncing') return 'Синхронизация…';
     if (s.state === 'error') return s.error ?? 'Ошибка';
     if (!s.last_sync) return 'Ожидает первой синхронизации';
@@ -78,6 +84,16 @@
     </div>
   {/if}
   {#if pairs.length}<h2>Синхронизируемые папки</h2>{/if}
+  {#if paused}
+    <div class="paused">
+      Синхронизация приостановлена.
+      <button onclick={() => api.setSyncPaused(false)}>Возобновить</button>
+    </div>
+  {:else if pairs.length}
+    <div class="top">
+      <button onclick={() => api.setSyncPaused(true)}>Приостановить всё</button>
+    </div>
+  {/if}
   <ul>
     {#each pairs as pair (pair.id)}
       <li class="pair" class:failed={pair.status.state === 'error'}>
@@ -111,7 +127,7 @@
           </details>
         {/if}
         <div class="actions">
-          <button onclick={() => api.syncNow(pair.id)} disabled={pair.status.state === 'syncing'}>Синхронизировать сейчас</button>
+          <button onclick={() => api.syncNow(pair.id)} disabled={pair.status.state === 'syncing' || paused}>Синхронизировать сейчас</button>
           <button onclick={() => remove(pair)}>Убрать</button>
         </div>
       </li>
@@ -158,6 +174,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .paused {
+    border-left: 3px solid var(--muted);
+    padding: 6px 10px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .warn {

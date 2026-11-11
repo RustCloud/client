@@ -17,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 rc-core.workspace = true
 rc-sync.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 notify = "8.2"
@@ -29,6 +29,12 @@ tokio.workspace = true
 url.workspace = true
 uuid.workspace = true
 tracing.workspace = true
+
+# Desktops only: start at login, and one copy of the app at a time (two would
+# sync the same folders at once).
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
 
 [dev-dependencies]
 chrono.workspace = true

@@ -16,7 +16,7 @@ sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 # SQLite built in: no system library to find on Windows or Android.
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 notify = "8.2"
 
 [dev-dependencies]

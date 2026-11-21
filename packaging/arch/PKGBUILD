@@ -1,0 +1,23 @@
+# Arch Linux package of the RustCloud client, made from the release's .deb (the
+# same files: the executable, the .desktop entry, the icons). release.yml fills
+# in pkgver, _version and the checksum and builds it with makepkg; the filled-in
+# PKGBUILD is attached to the release:
+#   makepkg -si
+pkgname=rustcloud-client
+pkgver=0.0.0
+_version=0.0.0
+pkgrel=1
+pkgdesc="RustCloud client: files on your RustCloud server and synced folders"
+arch=('x86_64')
+url="https://github.com/RustCloud/client"
+license=('unknown')
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'hicolor-icon-theme')
+options=('!strip' '!debug')
+source=("RustCloud_${_version}_amd64.deb::https://github.com/RustCloud/client/releases/download/v${_version}/RustCloud_${_version}_amd64.deb")
+sha256sums=('SKIP')
+
+package() {
+  # makepkg has unpacked the .deb (an ar archive): its files are in data.tar.*.
+  bsdtar -xf data.tar.* -C "$pkgdir"
+  chmod -R u=rwX,go=rX "$pkgdir/usr"
+}

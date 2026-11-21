@@ -214,6 +214,30 @@ jobs:
             if [ -n "$pattern" ]; then cp -v $pattern out/; fi
           done <<< "${{ matrix.files }}"
 
+      # Arch Linux: a package made from the .deb with makepkg, in an Arch
+      # container (packaging/arch/PKGBUILD), and the filled-in PKGBUILD.
+      - name: Arch Linux package
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          deb=$(ls out/*.deb | head -1)
+          mkdir -p arch
+          cp "$deb" "arch/RustCloud_${version}_amd64.deb"
+          sum=$(sha256sum "$deb" | cut -d' ' -f1)
+          # pkgver may not contain "-": 0.6.0-1 → 0.6.0_1.
+          sed -e "s/^pkgver=.*/pkgver=${version//-/_}/" -e "s/^_version=.*/_version=$version/" \
+            -e "s/^sha256sums=.*/sha256sums=('$sum')/" packaging/arch/PKGBUILD > arch/PKGBUILD
+          docker run --rm -v "$PWD/arch:/pkg" archlinux:latest bash -euc '
+            pacman -Sy --noconfirm --needed base-devel >/dev/null
+            useradd -m builder && chown -R builder /pkg
+            # Only repackages: the dependencies are for the users machine, not this one.
+            su builder -c "cd /pkg && makepkg --nodeps --noconfirm -f"
+          '
+          cp arch/*.pkg.tar.zst out/
+          cp arch/PKGBUILD out/PKGBUILD
+          tar tf out/*.pkg.tar.zst | grep -E '^usr/(bin|share/applications)/' | head
+          ls -l out/
+
       - name: Archive the executable
         if: matrix.archive
         shell: bash

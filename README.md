@@ -15,6 +15,8 @@
 |------|----------|
 | `RustCloud_<версия>_amd64.deb` | Debian, Ubuntu: `sudo apt install ./RustCloud_*.deb` |
 | `RustCloud-<версия>-1.x86_64.rpm` | Fedora, openSUSE: `sudo dnf install ./RustCloud-*.rpm` |
+| `rustcloud-client-<версия>-1-x86_64.pkg.tar.zst` | Arch Linux: `sudo pacman -U ./rustcloud-client-*.pkg.tar.zst` |
+| `PKGBUILD` | Arch Linux: собрать пакет самому, `makepkg -si` (скачает `.deb` этого релиза) |
 | `RustCloud_<версия>_amd64.AppImage` | любой Linux: всё своё внутри, `chmod +x` и запустить |
 | `rustcloud-client-<версия>-linux-x86_64.tar.gz` | только исполняемый файл, без установки |
 | `RustCloud_<версия>_x64-setup.exe` | Windows 10/11: установщик |
@@ -23,7 +25,8 @@
 | `RustCloud_<версия>_android.apk` | Android 7+ (arm64, arm, x86_64) |
 
 Исполняемому файлу из архива нужны WebKitGTK и GTK 3 из системы
-(Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`; в Fedora — `webkit2gtk4.1`).
+(Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`; в Fedora — `webkit2gtk4.1`;
+в Arch — `webkit2gtk-4.1`).
 Windows-сборкам нужен WebView2 — в Windows 10/11 он уже есть, установщик при необходимости
 поставит его сам. На Android синхронизируемые папки лежат в общей памяти устройства: дайте
 приложению доступ — Настройки → Приложения → RustCloud → Разрешения → Файлы и медиа →
@@ -169,7 +172,7 @@ RC_TEST_SERVER=/path/to/rustcloud cargo test -p rc-core -p rc-sync --features rc
 
 Тег `vX.Y.Z` (совпадает с `version` в [Cargo.toml](Cargo.toml)) запускает
 [release.yml](.github/workflows/release.yml): пакеты для всех платформ матрицы и релиз на GitHub
-с `SHA256SUMS`: Linux (`.deb`, `.rpm`, `.AppImage`, `.tar.gz`), Windows (`.exe`, `.msi`, `.zip`),
+с `SHA256SUMS`: Linux (`.deb`, `.rpm`, Arch `.pkg.tar.zst` и `PKGBUILD`, `.AppImage`, `.tar.gz`), Windows (`.exe`, `.msi`, `.zip`),
 Android (`.apk`). Пуш в ветку `release-check` собирает всё то же без публикации (пакеты — в
 артефактах запуска). Версии с суффиксом (`-beta.1`) должны быть числовыми (`-1`): этого
 требует MSI.

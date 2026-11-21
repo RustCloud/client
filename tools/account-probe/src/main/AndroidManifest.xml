@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <application
+    android:label="RustCloud: проверка аккаунта"
+    android:usesCleartextTraffic="true">
+    <activity
+      android:name=".ProbeActivity"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+      <!-- Every app that uses the RustCloud account declares this: the client
+           then sees it (Android 11+) and can check who signed it. -->
+      <intent-filter>
+        <action android:name="com.rustcloud.action.USE_ACCOUNT" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

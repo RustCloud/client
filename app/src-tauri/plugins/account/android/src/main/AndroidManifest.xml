@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- Since Android 11 an app sees only the apps it names. Apps that use the
+       RustCloud account declare this action, so the authenticator can check who
+       signed them and show their names. -->
+  <queries>
+    <intent>
+      <action android:name="com.rustcloud.action.USE_ACCOUNT" />
+    </intent>
+  </queries>
+
+  <application>
+    <!-- The system binds it for AccountManager calls. Exported, as the system
+         requires; apps cannot call it directly (it checks ACCOUNT_MANAGER, a
+         permission only the system holds). -->
+    <service
+      android:name="com.rustcloud.account.AuthenticatorService"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.accounts.AccountAuthenticator" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accounts.AccountAuthenticator"
+        android:resource="@xml/rustcloud_authenticator" />
+    </service>
+
+    <!-- "App X asks for your RustCloud account". Started by the asking app, so
+         exported; it answers only requests the authenticator registered. -->
+    <activity
+      android:name="com.rustcloud.account.ConsentActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+  </application>
+</manifest>

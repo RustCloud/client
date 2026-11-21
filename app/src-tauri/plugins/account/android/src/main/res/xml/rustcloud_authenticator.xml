@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- customTokens: the system neither caches tokens (they last 10 minutes) nor asks
+     the user itself; the authenticator decides who gets one (Access.kt). -->
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+  android:accountType="com.rustcloud.account"
+  android:icon="@drawable/rustcloud_account"
+  android:smallIcon="@drawable/rustcloud_account"
+  android:label="@string/rustcloud_account_label"
+  android:customTokens="true" />

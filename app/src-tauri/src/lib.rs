@@ -1,5 +1,6 @@
 //! The Tauri shell: commands the Svelte UI calls, over `rc-core`.
 
+mod account;
 mod session;
 mod sync;
 #[cfg(desktop)]
@@ -13,13 +14,13 @@ use rc_core::Client;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use session::Store;
 
 struct AppState {
-    client: Mutex<Option<Client>>,
+    /// [`session::slot`]: shared with the phone's account service.
+    client: session::Slot,
     store: Store,
     pairs: sync::Pairs,
 }
@@ -48,7 +49,7 @@ impl CmdError {
 type CmdResult<T> = Result<T, CmdError>;
 
 #[derive(Serialize)]
-struct Account {
+pub(crate) struct Account {
     server: String,
     username: String,
     display_name: String,
@@ -77,6 +78,7 @@ async fn restore(app: &AppHandle, state: &AppState) -> CmdResult<Option<Account>
         Ok(account) => {
             state.pairs.start(app, client);
             status_changed(app);
+            account::publish(app, Some(&account));
             Ok(Some(account))
         }
         Err(e) if e.needs_login => {
@@ -84,6 +86,7 @@ async fn restore(app: &AppHandle, state: &AppState) -> CmdResult<Option<Account>
             state.pairs.stop();
             state.store.forget();
             status_changed(app);
+            account::publish(app, None);
             Ok(None)
         }
         Err(e) => Err(e),
@@ -131,13 +134,22 @@ async fn login(app: AppHandle, state: State<'_, AppState>, server: String) -> Cm
     state.pairs.start(&app, &client);
     *state.client.lock().await = Some(client);
     status_changed(&app);
+    account::publish(&app, Some(&account));
     Ok(account)
 }
 
 #[tauri::command]
-async fn logout(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+async fn logout(app: AppHandle) -> CmdResult<()> {
+    sign_out(&app, true).await;
+    Ok(())
+}
+
+/// Syncing stops, the session ends and is forgotten. `remove_account`: the
+/// phone's account goes too (not when the system is removing it itself).
+pub(crate) async fn sign_out(app: &AppHandle, remove_account: bool) {
+    let state = app.state::<AppState>();
     state.pairs.stop();
-    status_changed(&app);
+    status_changed(app);
     if let Some(client) = state.client.lock().await.take() {
         // The session ends on the server too; offline, it just runs out.
         if let Err(e) = client.logout().await {
@@ -145,7 +157,9 @@ async fn logout(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
         }
     }
     state.store.forget();
-    Ok(())
+    if remove_account {
+        account::publish(app, None);
+    }
 }
 
 #[derive(Serialize)]
@@ -268,13 +282,16 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app))).plugin(
         tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![tray::HIDDEN_ARG])),
     );
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_rc_account::init());
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let pairs = sync::Pairs::load(&dir);
-            app.manage(AppState { client: Mutex::new(None), store: Store::new(dir), pairs });
+            app.manage(AppState { client: session::slot(), store: Store::new(dir), pairs });
+            account::attach(app.handle());
             let handle = app.handle().clone();
             // Offline at login (no network yet), it tries again every minute.
             tauri::async_runtime::spawn(async move {
@@ -326,7 +343,9 @@ pub fn run() {
             sync_now,
             sync_paused,
             set_sync_paused,
-            confirm_deletions
+            confirm_deletions,
+            account::account_apps,
+            account::account_revoke
         ])
         .run(tauri::generate_context!())
         .expect("error while running the RustCloud client");

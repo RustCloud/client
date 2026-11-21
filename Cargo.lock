@@ -3382,6 +3382,7 @@ version = "0.5.0"
 dependencies = [
  "chrono",
  "dunce",
+ "jni",
  "notify",
  "rc-core",
  "rc-sync",
@@ -3392,6 +3393,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tauri-plugin-rc-account",
  "tauri-plugin-single-instance",
  "tokio",
  "tracing",
@@ -4299,6 +4301,16 @@ dependencies = [
  "url",
  "windows",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-rc-account"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

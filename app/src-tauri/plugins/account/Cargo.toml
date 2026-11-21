@@ -1,0 +1,17 @@
+[package]
+name = "tauri-plugin-rc-account"
+description = "The phone's RustCloud account (Android AccountManager) for RustCloud apps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+# Tauri finds the plugin's Android library through this (DEP_..._ANDROID_LIBRARY_PATH).
+links = "tauri-plugin-rc-account"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"
+serde.workspace = true
+serde_json.workspace = true

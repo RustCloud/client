@@ -5,11 +5,23 @@
 //! Android Keystore) instead of a file.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rc_core::{Client, Tokens};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use url::Url;
+
+/// The logged-in client, one for the whole process. On Android the account
+/// service (account.rs) hands its tokens to other apps from the same process,
+/// even with no window; two clients renewing one refresh token would end the
+/// session, so both take the client from here.
+pub type Slot = Arc<Mutex<Option<Client>>>;
+
+pub fn slot() -> Slot {
+    static SLOT: OnceLock<Slot> = OnceLock::new();
+    SLOT.get_or_init(Slot::default).clone()
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Saved {

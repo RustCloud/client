@@ -41,6 +41,17 @@ export const login = (server: string) => invoke<Account>('login', { server });
 export const logout = () => invoke<void>('logout');
 export const list = (folder: string | null) => invoke<Listing>('list', { folder });
 
+// The phone's RustCloud account (Android; app/src-tauri/src/account.rs).
+
+export interface AllowedApp {
+  package: string;
+  label: string;
+}
+
+/** Apps of other developers with access to the account; null without a phone account (desktops). */
+export const accountApps = () => invoke<AllowedApp[] | null>('account_apps');
+export const accountRevoke = (pkg: string) => invoke<void>('account_revoke', { package: pkg });
+
 // Synced folders (app/src-tauri/src/sync.rs).
 
 export interface PairStatus {

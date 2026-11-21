@@ -38,6 +38,8 @@ crates/core/      rc-core: вход (OAuth 2.0 + PKCE), API сервера, ле
 crates/sync/      rc-sync: двусторонняя синхронизация папки (состояние в SQLite)
 app/              интерфейс на Svelte 5
 app/src-tauri/    приложение Tauri 2: команды поверх rc-core и rc-sync
+app/src-tauri/plugins/account/   аккаунт телефона: аутентификатор Android (Kotlin)
+tools/account-probe/             проверочное Android-приложение для аккаунта
 ```
 
 Ядро и синхронизация не знают об интерфейсе: их можно использовать и из консольного клиента.
@@ -84,6 +86,54 @@ app/src-tauri/    приложение Tauri 2: команды поверх rc-c
 приложение получает пару токенов. Refresh-токен меняется при каждом обновлении и сразу
 сохраняется — старый сервер считает украденным. Подробно — `docs/api/auth.md` сервера.
 Нужен сервер с коммитом «Client apps log in through the browser» или новее.
+
+### Аккаунт телефона (Android)
+
+После входа в настройках Android появляется «Аккаунты → RustCloud — alice@cloud.example.com».
+Через него другие приложения получают доступ к облаку без своего входа, как приложения Google
+через аккаунт Google. Удалить аккаунт в настройках — то же, что «Выйти» в приложении.
+
+- Сессия у клиента одна. Другие приложения получают только access-токен на 10 минут, refresh-токен
+  из клиента не уходит. Обновляет токены только клиент (Rust-ядро, `src/account.rs`): refresh-токен
+  меняется при каждом обновлении, и второе приложение, которое обновило бы его само, завершило бы
+  сессию.
+- Приложения, подписанные тем же ключом, что и клиент, получают токен без вопросов. Приложению
+  другого разработчика телефон показывает предупреждение: «Приложение X просит доступ к аккаунту
+  RustCloud…». Разрешения видны на вкладке «Доступ», там их можно отозвать.
+- Устроено как аутентификатор Android `AccountManager`, код — `app/src-tauri/plugins/account`.
+
+Как приложение получает токен:
+
+```kotlin
+val am = AccountManager.get(context)
+val account = am.getAccountsByType("com.rustcloud.account").firstOrNull()
+    // приложение другого разработчика не видит аккаунт, пока пользователь его не выберет:
+    // AccountManager.newChooseAccountIntent(null, null, arrayOf("com.rustcloud.account"), …)
+am.getAuthToken(account, "api", null, activity, { future ->
+    val result = future.result
+    val token = result.getString(AccountManager.KEY_AUTHTOKEN)  // Authorization: Bearer …
+    val server = result.getString("server")                     // https://cloud.example.com/
+    val expiresAt = result.getLong("expiresAt")                 // мс с 1970; потом просить снова
+}, null)
+```
+
+В манифест приложения нужно добавить фильтр, иначе с Android 11 клиент не видит приложение и не
+может проверить его подпись:
+
+```xml
+<activity android:name=".MainActivity" android:exported="true">
+  <intent-filter>
+    <action android:name="com.rustcloud.action.USE_ACCOUNT" />
+    <category android:name="android.intent.category.DEFAULT" />
+  </intent-filter>
+</activity>
+```
+
+Если клиент не залогинен или сессия кончилась, ответ содержит `KEY_INTENT` на экран входа клиента
+(`AccountManager` открывает его сам, если передан `activity`). Если нет сети,
+ответ — `ERROR_CODE_NETWORK_ERROR`. Проверочное приложение — `tools/account-probe`: CI собирает его
+при запусках без тега (артефакт `android-account-probe`) в двух подписях: `ours` (ключом клиента)
+и `other` (чужим).
 
 ## Сборка
 

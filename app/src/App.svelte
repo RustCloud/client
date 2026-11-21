@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import * as api from './api';
+  import Access from './Access.svelte';
   import Login from './Login.svelte';
   import Files from './Files.svelte';
   import Sync from './Sync.svelte';
@@ -8,9 +10,18 @@
   let account = $state<api.Account | null>(null);
   let loading = $state(true);
   let error = $state('');
-  let tab = $state<'files' | 'sync'>('files');
+  let tab = $state<'files' | 'sync' | 'access'>('files');
+  // The "Доступ" tab: only where there is a phone account (Android).
+  let phoneAccount = $state(false);
+  let unlisten: UnlistenFn | undefined;
 
   onMount(async () => {
+    // The account was removed in Android's settings: the app logged out.
+    unlisten = await listen('logged-out', () => {
+      account = null;
+      tab = 'files';
+    });
+    api.accountApps().then((apps) => (phoneAccount = apps !== null)).catch(() => {});
     try {
       account = await api.session();
     } catch (e) {
@@ -20,6 +31,8 @@
       loading = false;
     }
   });
+
+  onDestroy(() => unlisten?.());
 
   async function logout() {
     await api.logout();
@@ -43,6 +56,16 @@
       <button role="tab" aria-selected={tab === 'sync'} class:active={tab === 'sync'} onclick={() => (tab = 'sync')}>
         Синхронизация
       </button>
+      {#if phoneAccount}
+        <button
+          role="tab"
+          aria-selected={tab === 'access'}
+          class:active={tab === 'access'}
+          onclick={() => (tab = 'access')}
+        >
+          Доступ
+        </button>
+      {/if}
     </div>
     <div class="account">
       <span class="muted" title={account.server}>{account.display_name || account.username}</span>
@@ -51,8 +74,10 @@
   </div>
   {#if tab === 'files'}
     <Files onexpired={expired} />
-  {:else}
+  {:else if tab === 'sync'}
     <Sync onexpired={expired} />
+  {:else}
+    <Access {account} />
   {/if}
 {:else}
   <Login {error} onlogin={(a) => ((account = a), (error = ''))} />

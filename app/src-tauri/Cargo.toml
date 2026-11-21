@@ -36,5 +36,10 @@ tracing.workspace = true
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 
+# Android only: the phone's RustCloud account for our other apps (src/account.rs).
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-rc-account = { path = "plugins/account" }
+jni = "0.21"
+
 [dev-dependencies]
 chrono.workspace = true

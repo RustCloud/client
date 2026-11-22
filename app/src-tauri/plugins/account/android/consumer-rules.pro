@@ -2,3 +2,4 @@
 -keep class com.rustcloud.account.Native { *; }
 # Android creates these by name from the manifest; Tauri finds the plugin by name.
 -keep class com.rustcloud.account.AccountPlugin { *; }
+-keep class com.rustcloud.account.TrustStore { *; }

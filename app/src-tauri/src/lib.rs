@@ -36,9 +36,27 @@ struct CmdError {
 
 impl From<rc_core::Error> for CmdError {
     fn from(e: rc_core::Error) -> Self {
-        Self { code: e.code().map(str::to_owned), message: e.to_string(), needs_login: e.needs_login() }
+        let message = match e.untrusted_certificate() {
+            Some(reason) => format!("Сертификат сервера не доверен ({reason}). {TRUST_HINT}"),
+            None => e.to_string(),
+        };
+        Self { code: e.code().map(str::to_owned), message, needs_login: e.needs_login() }
     }
 }
+
+/// What to do when the server is signed by a CA the device does not trust.
+const TRUST_HINT: &str = if cfg!(target_os = "android") {
+    "Если сервер подписан вашим центром сертификации, установите его корневой сертификат: Настройки → \
+     Безопасность → Шифрование и учётные данные → Установка сертификатов → Сертификат ЦС, затем \
+     перезапустите приложение."
+} else if cfg!(windows) {
+    "Если сервер подписан вашим центром сертификации, установите его корневой сертификат в хранилище \
+     «Доверенные корневые центры сертификации» и перезапустите приложение."
+} else {
+    "Если сервер подписан вашим центром сертификации, добавьте его корневой сертификат в системные \
+     (Debian/Ubuntu: /usr/local/share/ca-certificates/ и update-ca-certificates; Fedora, Arch: \
+     trust anchor файл.crt) и перезапустите приложение."
+};
 
 impl CmdError {
     fn new(message: impl Into<String>) -> Self {

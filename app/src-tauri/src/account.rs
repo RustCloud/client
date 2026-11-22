@@ -154,8 +154,8 @@ mod jni_api {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::path::PathBuf;
 
-    use jni::objects::{JClass, JString};
-    use jni::sys::jstring;
+    use jni::objects::{JByteArray, JClass, JObjectArray, JString};
+    use jni::sys::{jint, jstring};
     use jni::JNIEnv;
 
     fn dir(env: &mut JNIEnv, dir: &JString) -> Option<PathBuf> {
@@ -172,6 +172,23 @@ mod jni_api {
             .and_then(|dir| catch_unwind(AssertUnwindSafe(|| super::token(dir))).ok())
             .unwrap_or_else(|| serde_json::json!({"error": "network", "message": "internal error"}));
         env.new_string(reply.to_string()).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+    }
+
+    /// The phone's CAs (`TrustStore.kt`), for self-hosted servers with a home CA.
+    #[no_mangle]
+    pub extern "system" fn Java_com_rustcloud_account_Native_nativeTrust<'l>(
+        mut env: JNIEnv<'l>,
+        _class: JClass<'l>,
+        certs: JObjectArray<'l>,
+    ) -> jint {
+        let mut der = Vec::new();
+        for i in 0..env.get_array_length(&certs).unwrap_or(0) {
+            let Ok(cert) = env.get_object_array_element(&certs, i) else { continue };
+            if let Ok(bytes) = env.convert_byte_array(JByteArray::from(cert)) {
+                der.push(bytes);
+            }
+        }
+        catch_unwind(|| rc_core::trust_roots(der)).map_or(0, |taken| taken as jint)
     }
 
     #[no_mangle]

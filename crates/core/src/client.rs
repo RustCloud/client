@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration as StdDuration;
 
 use chrono::Duration;
@@ -25,17 +25,51 @@ pub struct Client {
     on_tokens: Option<TokensSaved>,
 }
 
+/// CAs to trust besides the public and the system ones; see [`trust_roots`].
+static EXTRA_ROOTS: RwLock<Vec<reqwest::Certificate>> = RwLock::new(Vec::new());
+
+/// Trusts these CAs (DER) too, in HTTP clients made from now on ([`Client::http`]):
+/// a self-hosted server is often signed by a home CA. On Android, where rustls
+/// cannot read the phone's store, the app passes the phone's CAs here at start,
+/// including the ones the user installed. Returns how many were taken; broken
+/// certificates are skipped.
+pub fn trust_roots<C: AsRef<[u8]>>(der: impl IntoIterator<Item = C>) -> usize {
+    // reqwest parses them only when building a client, which then fails: check here.
+    let usable = |certs: &[reqwest::Certificate]| {
+        certs
+            .iter()
+            .fold(reqwest::Client::builder().tls_built_in_root_certs(false), |b, c| b.add_root_certificate(c.clone()))
+            .build()
+            .is_ok()
+    };
+    let mut found: Vec<_> =
+        der.into_iter().filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()).collect();
+    if !usable(&found) {
+        found.retain(|cert| usable(std::slice::from_ref(cert)));
+    }
+    let taken = found.len();
+    EXTRA_ROOTS.write().unwrap_or_else(|e| e.into_inner()).extend(found);
+    taken
+}
+
 /// Renew the access token this long before it ends.
 const RENEW_MARGIN: Duration = Duration::seconds(60);
 
 impl Client {
     /// The HTTP client every request of the app should go through (one connection pool).
+    ///
+    /// It trusts the public CAs, the system's store (where the OS has one rustls
+    /// can read: Linux, Windows) and the CAs given to [`trust_roots`].
     pub fn http() -> reqwest::Client {
-        reqwest::Client::builder()
+        let builder = reqwest::Client::builder()
             .user_agent(concat!("RustCloud-Client/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(StdDuration::from_secs(15))
             // No total timeout: large files take as long as they take.
-            .read_timeout(StdDuration::from_secs(120))
+            .read_timeout(StdDuration::from_secs(120));
+        let roots = EXTRA_ROOTS.read().unwrap_or_else(|e| e.into_inner());
+        roots
+            .iter()
+            .fold(builder, |builder, root| builder.add_root_certificate(root.clone()))
             .build()
             .expect("the TLS backend is built in")
     }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A self-hosted server may be signed by a home CA the user installed on the
+     phone: since Android 7 apps trust such CAs only when they say so here. Plain
+     HTTP is allowed too, for servers in the home network. -->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+      <certificates src="user" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>

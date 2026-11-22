@@ -20,12 +20,16 @@ internal object Native {
 
   @JvmStatic private external fun nativeToken(dataDir: String): String
   @JvmStatic private external fun nativeRemoved(dataDir: String)
+  @JvmStatic private external fun nativeTrust(certs: Array<ByteArray>): Int
 
   /** `{"token", "server", "expiresAt"}` or `{"error": "login" | "network", "message"}`. */
   fun token(context: Context): JSONObject = JSONObject(nativeToken(dataDir(context)))
 
   /** The account was removed in Settings: log out as the app's "Выйти" does. */
   fun removed(context: Context) = nativeRemoved(dataDir(context))
+
+  /** CAs (DER) to trust besides the public ones; how many were usable. See TrustStore. */
+  fun trust(certs: Array<ByteArray>): Int = nativeTrust(certs)
 
   // Where Tauri keeps the app's data (its app_data_dir on Android): session.json.
   private fun dataDir(context: Context): String = context.dataDir.absolutePath

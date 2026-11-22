@@ -15,6 +15,6 @@ pub mod testing;
 pub mod types;
 
 pub use auth::Tokens;
-pub use client::{Client, TokensSaved};
+pub use client::{trust_roots, Client, TokensSaved};
 pub use error::{Error, Result};
 pub use files::{Download, NodeUpdate};

@@ -11,6 +11,13 @@
   </queries>
 
   <application>
+    <!-- Hands the phone's CAs, including the ones the user installed, to the
+         app's Rust code at process start (TrustStore.kt). Not a real provider. -->
+    <provider
+      android:name="com.rustcloud.account.TrustStore"
+      android:authorities="${applicationId}.rustcloud-trust"
+      android:exported="false" />
+
     <!-- The system binds it for AccountManager calls. Exported, as the system
          requires; apps cannot call it directly (it checks ACCOUNT_MANAGER, a
          permission only the system holds). -->

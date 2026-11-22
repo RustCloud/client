@@ -51,6 +51,21 @@ impl Error {
         }
     }
 
+    /// Why TLS refused the server's certificate (`UnknownIssuer`, `Expired`…), if
+    /// it did: a self-hosted server signed by a CA this device does not trust.
+    pub fn untrusted_certificate(&self) -> Option<String> {
+        let Self::Http(e) = self else { return None };
+        let mut source: Option<&dyn std::error::Error> = Some(e);
+        while let Some(e) = source {
+            // rustls: "invalid peer certificate: UnknownIssuer".
+            if let Some(reason) = e.to_string().strip_prefix("invalid peer certificate: ") {
+                return Some(reason.to_owned());
+            }
+            source = e.source();
+        }
+        None
+    }
+
     /// Reads a failed API response.
     pub(crate) async fn from_response(response: reqwest::Response) -> Self {
         #[derive(Deserialize)]

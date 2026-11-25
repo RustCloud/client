@@ -336,7 +336,8 @@ impl<R: Remote> Engine<R> {
                 }
                 if let Some(r) = remote.get(path) {
                     let when = DateTime::from_timestamp_micros(r.mtime_us).unwrap_or_default();
-                    local::set_mtime(&tmp, when)?;
+                    let born = r.born_us.and_then(DateTime::from_timestamp_micros);
+                    local::set_times(&tmp, when, born)?;
                 }
                 std::fs::rename(&tmp, &target)?;
                 let after = local::stat(&target)?.expect("just written");

@@ -24,6 +24,10 @@ pub struct Node {
     /// older than the field.
     #[serde(default)]
     pub modified_at: Option<DateTime<Utc>>,
+    /// When the file was created on the device that uploaded it (`ctime`), or
+    /// `created_at` if it didn't say. `None` from servers before API 0.2.21.
+    #[serde(default)]
+    pub born_at: Option<DateTime<Utc>>,
     /// Set for what lies in the trash.
     #[serde(default)]
     pub trashed_at: Option<DateTime<Utc>>,
@@ -36,6 +40,12 @@ impl Node {
     /// The content time to give the local copy.
     pub fn mtime(&self) -> DateTime<Utc> {
         self.modified_at.unwrap_or(self.updated_at)
+    }
+
+    /// When the file was created, as the uploading device said; the time it
+    /// came to the server if it didn't.
+    pub fn born(&self) -> DateTime<Utc> {
+        self.born_at.unwrap_or(self.created_at)
     }
 }
 

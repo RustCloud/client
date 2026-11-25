@@ -86,12 +86,20 @@ impl Client {
     }
 
     /// Uploads the local file `path` as `name` into `folder`, streaming it, with
-    /// the local mtime. Without `overwrite`, a taken name is `409 NAME_TAKEN`.
+    /// the local mtime and creation time. Without `overwrite`, a taken name is
+    /// `409 NAME_TAKEN`.
+    ///
+    /// The creation time becomes the file's `born_at` (servers since API 0.2.21;
+    /// older ones skip it), only for a new file: what a gallery sorts photos by.
     pub async fn upload(&self, folder: Uuid, name: &str, path: &Path, overwrite: bool) -> Result<Node> {
         let mut url = self.url(&format!("api/v1/files/{folder}/upload"))?;
         url.query_pairs_mut().append_pair("name", name);
         if overwrite {
             url.query_pairs_mut().append_pair("overwrite", "true");
+        }
+        let meta = tokio::fs::metadata(path).await?;
+        if let Some(ctime) = birth_time(&meta).and_then(time_param) {
+            url.query_pairs_mut().append_pair("ctime", &ctime);
         }
         self.put_file(Method::POST, url, path, None).await
     }
@@ -106,7 +114,7 @@ impl Client {
 
     async fn put_file(&self, method: Method, mut url: url::Url, path: &Path, if_match: Option<&str>) -> Result<Node> {
         let meta = tokio::fs::metadata(path).await?;
-        if let Some(mtime) = meta.modified().ok().and_then(mtime_param) {
+        if let Some(mtime) = meta.modified().ok().and_then(time_param) {
             url.query_pairs_mut().append_pair("mtime", &mtime);
         }
         let size = meta.len();
@@ -181,8 +189,24 @@ impl Client {
     }
 }
 
-/// Unix seconds with microseconds, as the server takes `mtime`.
-fn mtime_param(time: SystemTime) -> Option<String> {
+/// When the file was created on this device. A copied file is younger than its
+/// content (a photo copied from a camera today, taken in March): then the mtime,
+/// which copies keep, is nearer the truth. Without a birth time (Linux before
+/// statx, Android) — the mtime too.
+fn birth_time(meta: &std::fs::Metadata) -> Option<SystemTime> {
+    match (meta.created().ok(), meta.modified().ok()) {
+        (Some(created), Some(modified)) => Some(created.min(modified)),
+        (created, modified) => created.or(modified),
+    }
+}
+
+/// Unix seconds with microseconds, as the server takes `mtime` and `ctime`.
+/// `None` for what the server refuses with a 400 — before 1970 or more than a
+/// day ahead (a clock gone wrong): better upload without the time than fail.
+fn time_param(time: SystemTime) -> Option<String> {
+    if time > SystemTime::now() + std::time::Duration::from_secs(12 * 3600) {
+        return None;
+    }
     let since = time.duration_since(SystemTime::UNIX_EPOCH).ok()?;
     Some(format!("{}.{:06}", since.as_secs(), since.subsec_micros()))
 }
@@ -194,9 +218,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mtime_keeps_microseconds() {
+    fn times_keep_microseconds() {
         let time = SystemTime::UNIX_EPOCH + Duration::new(1_730_985_600, 123_456_789);
-        assert_eq!(mtime_param(time).unwrap(), "1730985600.123456");
-        assert_eq!(mtime_param(SystemTime::UNIX_EPOCH - Duration::from_secs(1)), None);
+        assert_eq!(time_param(time).unwrap(), "1730985600.123456");
+        assert_eq!(time_param(SystemTime::UNIX_EPOCH - Duration::from_secs(1)), None);
+        assert_eq!(time_param(SystemTime::now() + Duration::from_secs(2 * 86400)), None, "a clock gone wrong");
     }
 }

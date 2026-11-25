@@ -159,12 +159,29 @@ pub fn conflict_name(name: &str, when: DateTime<Utc>) -> String {
     }
 }
 
-pub fn set_mtime(path: &Path, when: DateTime<Utc>) -> std::io::Result<()> {
-    let time = match u64::try_from(when.timestamp_micros()) {
+/// Gives a downloaded file its mtime and, where the system keeps one it lets
+/// set (Windows), its creation time: `born` is when it was created on the
+/// device that uploaded it.
+pub fn set_times(
+    path: &Path,
+    modified: DateTime<Utc>,
+    #[allow(unused)] born: Option<DateTime<Utc>>,
+) -> std::io::Result<()> {
+    #[allow(unused_mut)]
+    let mut times = std::fs::FileTimes::new().set_modified(system_time(modified));
+    #[cfg(windows)]
+    if let Some(born) = born {
+        use std::os::windows::fs::FileTimesExt;
+        times = times.set_created(system_time(born));
+    }
+    std::fs::File::options().write(true).open(path)?.set_times(times)
+}
+
+fn system_time(when: DateTime<Utc>) -> SystemTime {
+    match u64::try_from(when.timestamp_micros()) {
         Ok(micros) => SystemTime::UNIX_EPOCH + Duration::from_micros(micros),
         Err(_) => SystemTime::UNIX_EPOCH,
-    };
-    std::fs::File::options().write(true).open(path)?.set_modified(time)
+    }
 }
 
 fn nanos(time: SystemTime) -> i64 {

@@ -99,6 +99,7 @@ impl RemoteNode {
             size: node.size,
             etag: node.etag.clone(),
             mtime_us: node.mtime().timestamp_micros(),
+            born_us: node.born_at.map(|t| t.timestamp_micros()),
         }
     }
 }

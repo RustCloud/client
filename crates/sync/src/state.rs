@@ -24,6 +24,10 @@ pub struct RemoteNode {
     pub etag: Option<String>,
     /// The content's mtime on the server, microseconds since 1970: downloads get it.
     pub mtime_us: i64,
+    /// When the file was created on the device that uploaded it (`born_at`),
+    /// microseconds since 1970: downloads get it where the system keeps one
+    /// (Windows). `None` from older servers and states.
+    pub born_us: Option<i64>,
 }
 
 /// What both sides agreed on for one path.
@@ -46,7 +50,8 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS remote (
     id TEXT PRIMARY KEY, parent TEXT NOT NULL, name TEXT NOT NULL,
-    is_dir INTEGER NOT NULL, size INTEGER NOT NULL, etag TEXT, mtime_us INTEGER NOT NULL
+    is_dir INTEGER NOT NULL, size INTEGER NOT NULL, etag TEXT, mtime_us INTEGER NOT NULL,
+    born_us INTEGER
 );
 CREATE TABLE IF NOT EXISTS base (
     path TEXT PRIMARY KEY, is_dir INTEGER NOT NULL, node_id TEXT NOT NULL,
@@ -70,6 +75,14 @@ impl State {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
+        // Older states lack `born_us`; their rows learn it with the next change.
+        let has_born: bool =
+            conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('remote') WHERE name = 'born_us'", [], |r| {
+                r.get(0)
+            })?;
+        if !has_born {
+            conn.execute_batch("ALTER TABLE remote ADD COLUMN born_us INTEGER")?;
+        }
         let state = Self { conn };
         let roots = format!("{}\n{remote_root}", local_root.display());
         if state.get("roots")?.as_deref() != Some(roots.as_str()) {
@@ -97,7 +110,8 @@ impl State {
     }
 
     pub fn remote(&self) -> Result<HashMap<Uuid, RemoteNode>> {
-        let mut query = self.conn.prepare("SELECT id, parent, name, is_dir, size, etag, mtime_us FROM remote")?;
+        let mut query =
+            self.conn.prepare("SELECT id, parent, name, is_dir, size, etag, mtime_us, born_us FROM remote")?;
         let rows = query.query_map([], |r| {
             Ok(RemoteNode {
                 id: uuid(r.get(0)?),
@@ -107,6 +121,7 @@ impl State {
                 size: r.get::<_, i64>(4)? as u64,
                 etag: r.get(5)?,
                 mtime_us: r.get(6)?,
+                born_us: r.get(7)?,
             })
         })?;
         Ok(rows.map(|row| row.map(|n| (n.id, n))).collect::<rusqlite::Result<_>>()?)
@@ -117,8 +132,10 @@ impl State {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM remote", [])?;
         {
-            let mut insert =
-                tx.prepare("INSERT INTO remote (id, parent, name, is_dir, size, etag, mtime_us) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
+            let mut insert = tx.prepare(
+                "INSERT INTO remote (id, parent, name, is_dir, size, etag, mtime_us, born_us) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
             for n in nodes.values() {
                 insert.execute(params![
                     n.id.to_string(),
@@ -127,7 +144,8 @@ impl State {
                     n.is_dir,
                     n.size as i64,
                     n.etag,
-                    n.mtime_us
+                    n.mtime_us,
+                    n.born_us
                 ])?;
             }
         }
@@ -244,6 +262,7 @@ mod tests {
             size: 1,
             etag: Some("e".into()),
             mtime_us: 5,
+            born_us: Some(3),
         };
         state.save_remote(&HashMap::from([(node.id, node.clone())]), "c1").unwrap();
         drop(state);
@@ -257,5 +276,29 @@ mod tests {
         let state = State::open(&file, Path::new("/other"), Uuid::from_u128(1)).unwrap();
         assert!(state.base().unwrap().is_empty() && state.remote().unwrap().is_empty());
         assert_eq!(state.get("cursor").unwrap(), None);
+    }
+
+    #[test]
+    fn an_older_state_learns_creation_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.sqlite");
+        let old = Connection::open(&file).unwrap();
+        old.execute_batch(
+            "CREATE TABLE remote (
+                id TEXT PRIMARY KEY, parent TEXT NOT NULL, name TEXT NOT NULL,
+                is_dir INTEGER NOT NULL, size INTEGER NOT NULL, etag TEXT, mtime_us INTEGER NOT NULL
+            );
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO meta VALUES ('roots', '/l
+00000000-0000-0000-0000-000000000001');
+            INSERT INTO remote VALUES ('00000000-0000-0000-0000-000000000002',
+                '00000000-0000-0000-0000-000000000001', 'a', 0, 1, 'e', 5);",
+        )
+        .unwrap();
+        drop(old);
+
+        let state = State::open(&file, Path::new("/l"), Uuid::from_u128(1)).unwrap();
+        let node = &state.remote().unwrap()[&Uuid::from_u128(2)];
+        assert_eq!((node.mtime_us, node.born_us), (5, None), "kept, without a creation time");
     }
 }

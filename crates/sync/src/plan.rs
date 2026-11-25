@@ -317,6 +317,7 @@ mod tests {
                     size: 0,
                     etag: None,
                     mtime_us: 0,
+                    born_us: None,
                 },
             );
             self.base
@@ -349,6 +350,7 @@ mod tests {
             size: content.len() as u64,
             etag: Some(format!("etag-{content}")),
             mtime_us: 0,
+            born_us: None,
         }
     }
 
@@ -498,7 +500,16 @@ mod tests {
         w.local.insert("x".into(), file("f"));
         w.remote.insert(
             "x".into(),
-            RemoteNode { id: id("x"), parent: ROOT, name: "x".into(), is_dir: true, size: 0, etag: None, mtime_us: 0 },
+            RemoteNode {
+                id: id("x"),
+                parent: ROOT,
+                name: "x".into(),
+                is_dir: true,
+                size: 0,
+                etag: None,
+                mtime_us: 0,
+                born_us: None,
+            },
         );
         assert_eq!(
             w.plan(),
@@ -521,7 +532,16 @@ mod tests {
         w.local.insert("d".into(), LocalEntry { is_dir: true, size: 0, mtime_ns: 0 });
         w.remote.insert(
             "d".into(),
-            RemoteNode { id: id("d"), parent: ROOT, name: "d".into(), is_dir: true, size: 0, etag: None, mtime_us: 0 },
+            RemoteNode {
+                id: id("d"),
+                parent: ROOT,
+                name: "d".into(),
+                is_dir: true,
+                size: 0,
+                etag: None,
+                mtime_us: 0,
+                born_us: None,
+            },
         );
         w.local.insert("d/mine.txt".into(), file("m"));
         w.remote.insert("d/theirs.txt".into(), rfile("d/theirs.txt", "t"));

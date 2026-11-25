@@ -33,6 +33,11 @@ async fn login_files_and_token_renewal() {
     let node = client.upload(docs.id, "report.txt", &path, false).await.unwrap();
     assert_eq!(node.size, 5);
     assert_eq!(node.modified_at.unwrap().timestamp_micros(), 1_700_000_000_123_456);
+    // The file was created today but its content is from 2023 (as a copied photo):
+    // its creation time is the older one. Servers before API 0.2.21 don't say.
+    if let Some(born) = node.born_at {
+        assert_eq!(born.timestamp_micros(), 1_700_000_000_123_456);
+    }
     let taken = client.upload(docs.id, "report.txt", &path, false).await.unwrap_err();
     assert_eq!(taken.code(), Some("NAME_TAKEN"));
     let listed = client.children(docs.id).await.unwrap();

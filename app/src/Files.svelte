@@ -81,7 +81,9 @@
                 <span class="icon" aria-hidden="true">📄</span>
                 <span class="name">{node.name}</span>
                 <span class="muted size">{format.size(node.size)}</span>
-                <span class="muted when">{format.date(node.modified_at ?? node.updated_at)}</span>
+                <span class="muted when" title={node.born_at ? `Создан: ${format.date(node.born_at)}` : undefined}
+                  >{format.date(node.modified_at ?? node.updated_at)}</span
+                >
               </div>
             {/if}
           </li>

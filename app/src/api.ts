@@ -11,6 +11,8 @@ export interface Node {
   etag: string | null;
   updated_at: string;
   modified_at: string | null;
+  /** Created on the uploading device; absent from servers before API 0.2.21. */
+  born_at?: string | null;
 }
 
 export interface Account {

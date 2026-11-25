@@ -76,6 +76,7 @@ impl Inner {
             created_at: n.mtime,
             updated_at: n.mtime,
             modified_at: Some(n.mtime),
+            born_at: None,
             trashed_at: self.in_trash(n.id).then_some(n.mtime),
             lock: None,
         }

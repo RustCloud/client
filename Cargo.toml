@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*", "app/src-tauri", "app/src-tauri/plugins/*"]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 rust-version = "1.97"
 publish = false
